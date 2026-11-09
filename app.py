@@ -15,7 +15,20 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+def _trova_icona():
+    """Usa icon.png se c'è, altrimenti la prima immagine .png accanto all'app (es. IMG_4957.png)."""
+    cartella = os.path.dirname(os.path.abspath(__file__))
+    preferita = os.path.join(cartella, "icon.png")
+    if os.path.exists(preferita):
+        return preferita
+    try:
+        png = sorted(f for f in os.listdir(cartella) if f.lower().endswith(".png"))
+    except Exception:
+        png = []
+    return os.path.join(cartella, png[0]) if png else preferita
+
+
+ICON_PATH = _trova_icona()
 try:
     from PIL import Image
 
