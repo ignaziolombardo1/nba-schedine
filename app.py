@@ -4,14 +4,55 @@ Dati: nba_api (gratuita). Se non risponde parte la modalità DEMO.
 Le linee dei bookmaker si inseriscono a mano (per ora).
 Avvio:  streamlit run app.py
 """
+import base64
+import html
+import os
 import re
 from datetime import datetime
 
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
-st.set_page_config(page_title="NBA Schedine", page_icon="🏀", layout="centered")
+ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+try:
+    from PIL import Image
+
+    _icona = Image.open(ICON_PATH)
+except Exception:
+    _icona = "🏀"
+
+st.set_page_config(page_title="NBA Schedine", page_icon=_icona, layout="centered")
+
+
+def inietta_icona():
+    """Prova a impostare l'icona per la schermata Home del telefono (apple-touch-icon)."""
+    try:
+        with open(ICON_PATH, "rb") as f:
+            uri = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+    except Exception:
+        return
+    components.html(
+        f"""<script>
+        try {{
+          const d = window.parent.document;
+          d.querySelectorAll('link[rel="apple-touch-icon"], link[rel="icon"], link[rel="shortcut icon"]').forEach(e => e.remove());
+          for (const rel of ['apple-touch-icon', 'icon']) {{
+            const l = d.createElement('link'); l.rel = rel; l.href = '{uri}';
+            if (rel === 'apple-touch-icon') l.setAttribute('sizes', '180x180'); else l.type = 'image/png';
+            d.head.appendChild(l);
+          }}
+          if (!d.querySelector('meta[name="apple-mobile-web-app-title"]')) {{
+            const m = d.createElement('meta'); m.name = 'apple-mobile-web-app-title'; m.content = 'NBA Schedine'; d.head.appendChild(m);
+          }}
+        }} catch (e) {{}}
+        </script>""",
+        height=0,
+    )
+
+
+inietta_icona()
 
 HOME_ADV = 1.5      # vantaggio casa in punti (metà a testa)
 MIN_MINUTI = 20     # giocatori con meno minuti medi vengono ignorati
@@ -34,6 +75,11 @@ h1,h2,h3 {{ color:{ARANCIO}; }}
 .card .v {{ font-size:18px; font-weight:700; text-align:right; white-space:nowrap; }}
 .card .e {{ font-size:11px; text-align:right; color:{GRIGIO}; }}
 .box {{ background:#2a2218; border-radius:12px; padding:12px 14px; margin:8px 0; }}
+.card2 {{ background:#1b1f27; border-radius:12px; padding:12px 14px; margin-bottom:6px; }}
+.riga {{ display:flex; justify-content:space-between; align-items:center; gap:8px; }}
+.s {{ font-size:12px; color:{GRIGIO}; }}
+.grande {{ font-size:28px; font-weight:600; }}
+.pill {{ background:#0f1115; padding:3px 9px; border-radius:6px; font-size:11px; }}
 button[role="tab"] {{ color:#f2f2f2; }}
 button[role="tab"][aria-selected="true"] {{ color:{ARANCIO}; }}
 </style>
@@ -344,8 +390,8 @@ if "esclusi" not in st.session_state:
     st.session_state.esclusi = []
 
 
-def campo_linea(chiave, etichetta, minimo=0.0):
-    """Campo numerico che ricorda il valore anche quando cambi partita."""
+def campo_linea(chiave, etichetta, minimo=0.0, segnaposto=None):
+    """Campo numerico (con + e -) che ricorda il valore anche quando cambi partita."""
     w = "w_" + chiave
     if w not in st.session_state and st.session_state.linee.get(chiave) is not None:
         st.session_state[w] = st.session_state.linee[chiave]
@@ -353,8 +399,9 @@ def campo_linea(chiave, etichetta, minimo=0.0):
     def salva():
         st.session_state.linee[chiave] = st.session_state[w]
 
-    st.number_input(etichetta, min_value=minimo, max_value=400.0, value=None,
-                    step=0.5, key=w, on_change=salva)
+    st.number_input(etichetta, min_value=minimo, max_value=400.0, value=None, step=0.5,
+                    key=w, on_change=salva, placeholder=segnaposto,
+                    label_visibility="collapsed" if segnaposto else "visible")
 
 
 # ------------------------------------------------------------------- DATI
@@ -392,96 +439,185 @@ ore = {(g["casa"], g["trasf"]): g["ora"] for _, g in partite.iterrows()}
 
 giocate = giocate_da_linee(proiezioni, gioc_df, st.session_state.linee)
 
-# ------------------------------------------------------------------- TABS
-t_top, t_stu = st.tabs(["Consigli", "Studio partita"])
-per_id = {g["id"]: g for g in giocate}
+# ---------------------------------------------------------------- GRAFICI
+def esc(x):
+    return html.escape(str(x))
 
-with t_top:
-    if not giocate:
-        st.info("Nessun consiglio ancora: apri «Studio partita» e inserisci le linee del bookmaker "
-                "(se ESPN le ha trovate, sono già compilate).")
+
+def gauge(stima, linea):
+    """Barra con la stima (pallino arancio) e la linea del bookmaker (lineetta bianca)."""
+    lo, hi = stima - 20, stima + 20
+
+    def p(v):
+        return max(0, min(100, (v - lo) / (hi - lo) * 100))
+
+    marcatore = ""
+    testo = f"Stima {stima:.1f}"
+    if linea:
+        marcatore = f'<div style="position:absolute;left:{p(linea)}%;top:-4px;width:2px;height:18px;background:#f2f2f2"></div>'
+        testo = f"Linea {linea:g} · Stima {stima:.1f}"
+    return (
+        f'<div style="position:relative;height:10px;background:#2a2f3a;border-radius:5px;margin:14px 0 6px">{marcatore}'
+        f'<div style="position:absolute;left:calc({p(stima)}% - 6px);top:-1px;width:12px;height:12px;'
+        f'border-radius:50%;background:{ARANCIO}"></div></div><div class="s">{testo}</div>'
+    )
+
+
+def pillola(z):
+    et, col = forza(z)
+    return f'<span class="pill" style="color:{col}">{et}</span>'
+
+
+def scheda_partita(casa, trasf, r, ora, miglior):
+    lt = st.session_state.linee.get(f"tot_{casa}")
+    h = f'<div class="card2"><div class="riga"><b>{esc(trasf)} @ {esc(casa)}</b><span class="s">{esc(ora)}</span></div>'
+    h += gauge(r["totale"], lt)
+    if miglior:
+        h += f'<div class="riga" style="margin-top:8px"><span>{esc(miglior["testo"])}</span>{pillola(miglior["z"])}</div>'
     else:
+        h += '<div class="s" style="margin-top:8px">Nessuna linea inserita</div>'
+    return h + "</div>"
+
+
+def barra_giocatore(p, lp):
+    scala = max(40.0, p["atteso"] * 1.3, (lp or 0) * 1.3)
+    marcatore = ""
+    if lp:
+        marcatore = f'<div style="position:absolute;left:{lp / scala * 100}%;top:-3px;width:2px;height:14px;background:#f2f2f2"></div>'
+    return (
+        f'<div class="card2"><div class="riga"><b>{esc(p["giocatore"])}</b>'
+        f'<span class="s">{p["minuti"]:.0f} min</span></div>'
+        f'<div style="position:relative;height:8px;background:#2a2f3a;border-radius:4px;margin:12px 0 6px">'
+        f'<div style="width:{p["atteso"] / scala * 100}%;height:8px;background:{ARANCIO};border-radius:4px"></div>{marcatore}</div>'
+        f'<div class="riga"><span class="s">Stima {p["atteso"]:.1f} · forma {p["forma"]:.1f} · stagione {p["stagione"]:.1f}</span></div></div>'
+    )
+
+
+def elenco_consigli(giocate):
+    gruppi = {"Forte": [], "Media": [], "Debole": []}
+    for gi in giocate:
+        gruppi[forza(gi["z"])[0]].append(gi)
+    for nome, titolo in (("Forte", "Segnali forti"), ("Media", "Segnali medi"), ("Debole", "Segnali deboli")):
+        if not gruppi[nome]:
+            continue
+        contenitore = st.expander(f"{titolo} ({len(gruppi[nome])})") if nome == "Debole" else st.container()
+        with contenitore:
+            if nome != "Debole":
+                st.markdown(f"**{titolo}**")
+            for gi in gruppi[nome]:
+                card(f"{gi['partita']} · {gi['tipo']}", gi["testo"], f"{gi['diff']:.1f} pt",
+                     f"stima {gi['atteso']}", forza(gi["z"])[1])
+                st.caption(gi["motivo"])
+
+
+# ------------------------------------------------------------- NAVIGAZIONE
+per_id = {g["id"]: g for g in giocate}
+miglior = {}
+for gi in giocate:
+    miglior.setdefault(gi["partita"], gi)
+
+if "vista" not in st.session_state:
+    st.session_state.vista = "Giornata"
+
+
+def vai_studio(etichetta):
+    st.session_state.partita = etichetta
+    st.session_state.vista = "Studio partita"
+
+
+vista = st.segmented_control("Vista", ["Giornata", "Studio partita"], key="vista",
+                             label_visibility="collapsed") or "Giornata"
+
+# ---------------------------------------------------------------- GIORNATA
+if vista == "Giornata":
+    forti = sum(1 for g in giocate if forza(g["z"])[0] == "Forte")
+    st.caption(f"{len(proiezioni)} partite · {forti} segnali forti · {len(giocate)} giocate analizzate")
+    for (casa, trasf), r in proiezioni.items():
+        st.markdown(scheda_partita(casa, trasf, r, ore.get((casa, trasf), ""),
+                                   miglior.get(f"{trasf} @ {casa}")), unsafe_allow_html=True)
+        st.button("Studia questa partita", key=f"vai_{casa}", on_click=vai_studio,
+                  args=(f"{trasf} @ {casa}",), use_container_width=True)
+    st.markdown("### Consigli ordinati")
+    if giocate:
         st.caption("Ogni consiglio confronta la stima dell'app con la linea del bookmaker. "
                    "Più la distanza è grande, più il segnale è forte. È un'indicazione, non una certezza.")
-        gruppi = {"Forte": [], "Media": [], "Debole": []}
-        for gi in giocate:
-            gruppi[forza(gi["z"])[0]].append(gi)
-        for nome, titolo in (("Forte", "Segnali forti"), ("Media", "Segnali medi"), ("Debole", "Segnali deboli")):
-            if not gruppi[nome]:
-                continue
-            contenitore = st.expander(f"{titolo} ({len(gruppi[nome])})") if nome == "Debole" else st.container()
-            with contenitore:
-                if nome != "Debole":
-                    st.subheader(titolo)
-                for gi in gruppi[nome]:
-                    col = forza(gi["z"])[1]
-                    card(f"{gi['partita']} · {gi['tipo']}", gi["testo"], f"{gi['diff']:.1f} pt",
-                         f"stima {gi['atteso']}", col)
-                    st.caption(gi["motivo"])
+        elenco_consigli(giocate)
+    else:
+        st.info("Nessun consiglio ancora: apri «Studio partita» e inserisci le linee "
+                "(se ESPN le ha trovate, sono già compilate).")
 
-with t_stu:
-    scelta = st.selectbox("Partita", [f"{t} @ {c}" for (c, t) in proiezioni])
-    if scelta:
-        trasf, casa = [x.strip() for x in scelta.split("@")]
-        r = proiezioni[(casa, trasf)]
-        d = gioc_df[(casa, trasf)]
-        marg = r["margine_casa"]
-        fav = casa if marg > 0 else trasf
+# ----------------------------------------------------------- STUDIO PARTITA
+else:
+    opzioni = [f"{t} @ {c}" for (c, t) in proiezioni]
+    if st.session_state.get("partita") not in opzioni:
+        st.session_state.partita = opzioni[0]
+    scelta = st.pills("Partita", opzioni, key="partita", label_visibility="collapsed") or opzioni[0]
+    trasf, casa = [x.strip() for x in scelta.split("@")]
+    r = proiezioni[(casa, trasf)]
+    d = gioc_df[(casa, trasf)]
+    marg = r["margine_casa"]
+    fav = casa if marg > 0 else trasf
+    quota_casa = r["pt_casa"] / (r["pt_casa"] + r["pt_trasf"]) * 100
 
-        st.subheader("1. Sintesi")
-        st.caption(ore.get((casa, trasf), ""))
-        card("Punti attesi", f"{casa} {r['pt_casa']:.1f} · {trasf} {r['pt_trasf']:.1f}",
-             f"{r['totale']:.1f}", "totale atteso")
-        card("Squadra favorita", fav, f"{abs(marg):.1f} pt", "margine stimato")
+    st.markdown(
+        f'<div class="card2"><div class="riga" style="align-items:flex-end">'
+        f'<div><div class="s">{esc(casa)} casa</div><div class="grande">{r["pt_casa"]:.1f}</div></div>'
+        f'<div class="s">{esc(ore.get((casa, trasf), ""))}</div>'
+        f'<div style="text-align:right"><div class="s">{esc(trasf)}</div><div class="grande">{r["pt_trasf"]:.1f}</div></div></div>'
+        f'<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:10px">'
+        f'<div style="width:{quota_casa}%;background:{ARANCIO}"></div><div style="flex:1;background:#4a5060"></div></div>'
+        f'<div class="s" style="margin-top:6px">Favorita {esc(fav)} di {abs(marg):.1f} punti</div></div>',
+        unsafe_allow_html=True,
+    )
 
-        st.subheader("2. Totale e spread")
-        c1, c2 = st.columns(2)
-        with c1:
-            campo_linea(f"tot_{casa}", "Linea Over/Under")
-        with c2:
-            campo_linea(f"spr_{casa}", f"Handicap {casa} (es. -4.5)", minimo=-60.0)
-        trovati = [per_id[k] for k in (f"tot_{casa}", f"spr_{casa}") if k in per_id]
-        for gi in trovati:
-            et, col = forza(gi["z"])
-            card(gi["tipo"], gi["testo"], f"{gi['diff']:.1f} pt", f"{et} · {gi['atteso']}", col)
-            st.caption(gi["motivo"])
-        if not trovati:
-            st.caption("Inserisci le linee per ricevere il consiglio.")
+    st.markdown("### Totale e spread")
+    gt = per_id.get(f"tot_{casa}")
+    st.markdown(
+        f'<div class="card2"><div class="riga"><span class="s">Over/Under</span>'
+        f'{pillola(gt["z"]) if gt else ""}</div>'
+        f'{gauge(r["totale"], st.session_state.linee.get(f"tot_{casa}"))}</div>',
+        unsafe_allow_html=True,
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        campo_linea(f"tot_{casa}", "Linea Over/Under")
+    with c2:
+        campo_linea(f"spr_{casa}", f"Handicap {casa} (es. -4.5)", minimo=-60.0)
+    trovati = [per_id[k] for k in (f"tot_{casa}", f"spr_{casa}") if k in per_id]
+    for gi in trovati:
+        card(gi["tipo"], gi["testo"], f"{gi['diff']:.1f} pt", f"stima {gi['atteso']}", forza(gi["z"])[1])
+        st.caption(gi["motivo"])
+    if not trovati:
+        st.caption("Inserisci le linee per ricevere il consiglio.")
 
-        st.subheader("3. Giocatori")
-        if players.empty:
-            st.info("Statistiche dei giocatori non disponibili con questa fonte.")
-        else:
-            tutti = sorted(
-                set(players[players["TEAM_ABBREVIATION"].isin([casa, trasf])]["PLAYER_NAME"])
-                | set(st.session_state.esclusi)
-            )
-            st.multiselect("Giocatori out (esclusi dal calcolo)", tutti, key="esclusi")
-            st.caption("Scrivi la linea punti del bookmaker accanto al giocatore.")
-            for _, p in d.iterrows():
-                a, b = st.columns([3, 2])
-                with a:
-                    card(f"forma {p['forma']:.1f} · stagione {p['stagione']:.1f} · {p['minuti']:.0f} min",
-                         p["giocatore"], f"{p['atteso']:.1f}", "punti attesi")
-                with b:
-                    campo_linea(f"pl_{p['giocatore']}", "Linea")
-                gi = per_id.get(f"pl_{p['giocatore']}")
-                if gi:
-                    st.caption(f"**{gi['testo']}** ({forza(gi['z'])[0]}). {gi['motivo']}")
+    st.markdown("### Giocatori")
+    if players.empty:
+        st.info("Statistiche dei giocatori non disponibili con questa fonte.")
+    else:
+        rosa = players[(players["TEAM_ABBREVIATION"].isin([casa, trasf])) & (players["MIN"] >= MIN_MINUTI)]
+        tutti = sorted(set(rosa["PLAYER_NAME"]) | set(st.session_state.esclusi))
+        st.pills("Tocca i giocatori che sono out", tutti, selection_mode="multi", key="esclusi")
+        for _, p in d.iterrows():
+            lp = st.session_state.linee.get(f"pl_{p['giocatore']}")
+            st.markdown(barra_giocatore(p, lp), unsafe_allow_html=True)
+            campo_linea(f"pl_{p['giocatore']}", "Linea punti", segnaposto=f"Linea punti (es. {round(p['atteso'] * 2) / 2:g})")
+            gi = per_id.get(f"pl_{p['giocatore']}")
+            if gi:
+                st.caption(f"**{gi['testo']}** ({forza(gi['z'])[0]}). {gi['motivo']}")
 
-        st.subheader("4. Da controllare prima di decidere")
-        note = ["Infortuni e formazioni: l'app non li legge ancora. Segna a mano i giocatori out e controlla le "
-                "ultime notizie poco prima della partita.",
-                "Back-to-back e riposi: non sono considerati nel calcolo."]
-        if "ESPN" in modo:
-            note.append("Con la fonte ESPN la forma recente non è disponibile: le stime dei giocatori usano la media stagionale.")
-        if abs(marg) >= 10:
-            note.append("Margine stimato ampio: nei finali sbilanciati i titolari possono giocare meno minuti, "
-                        "con rischio per gli over sui giocatori.")
-        if abs(marg) < 3:
-            note.append("Partita molto equilibrata: lo spread è poco affidabile, conta di più il totale.")
-        for n in note:
-            st.markdown("• " + n)
+    st.markdown("### Da controllare prima di decidere")
+    note = ["Infortuni e formazioni: l'app non li legge ancora. Segna i giocatori out e controlla le "
+            "ultime notizie poco prima della partita.",
+            "Back-to-back e riposi: non sono considerati nel calcolo."]
+    if "ESPN" in modo:
+        note.append("Con la fonte ESPN la forma recente non è disponibile: le stime dei giocatori usano la media stagionale.")
+    if abs(marg) >= 10:
+        note.append("Margine stimato ampio: nei finali sbilanciati i titolari possono giocare meno minuti, "
+                    "con rischio per gli over sui giocatori.")
+    if abs(marg) < 3:
+        note.append("Partita molto equilibrata: lo spread è poco affidabile, conta di più il totale.")
+    for n in note:
+        st.markdown("• " + n)
 
 with st.expander("Diagnostica dati"):
     st.write(f"Fonte: **{modo}**")
