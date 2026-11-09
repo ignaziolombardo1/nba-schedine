@@ -93,6 +93,11 @@ h1,h2,h3 {{ color:{ARANCIO}; }}
 .s {{ font-size:12px; color:{GRIGIO}; }}
 .grande {{ font-size:28px; font-weight:600; }}
 .pill {{ background:#0f1115; padding:3px 9px; border-radius:6px; font-size:11px; }}
+.badge {{ padding:2px 6px; border-radius:6px; font-size:11px; font-weight:700; margin-right:6px; }}
+.tre {{ display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:10px; }}
+.tile {{ background:#0f1115; border-radius:8px; padding:6px; text-align:center; border:1px solid transparent; }}
+.tile b {{ font-size:18px; }}
+.tile span {{ display:block; font-size:11px; color:{GRIGIO}; }}
 button[role="tab"] {{ color:#f2f2f2; }}
 button[role="tab"][aria-selected="true"] {{ color:{ARANCIO}; }}
 </style>
@@ -140,8 +145,8 @@ def carica_dati_live():
     teams = t.merge(sigle, on="TEAM_ID")[
         ["TEAM_ABBREVIATION", "PACE", "OFF_RATING", "DEF_RATING"]
     ].set_index("TEAM_ABBREVIATION")
-    players = p_season[["PLAYER_NAME", "TEAM_ABBREVIATION", "MIN", "PTS"]].merge(
-        p_form[["PLAYER_NAME", "PTS"]], on="PLAYER_NAME", suffixes=("_ST", "_L10")
+    players = p_season[["PLAYER_NAME", "TEAM_ABBREVIATION", "MIN", "PTS", "REB", "AST"]].merge(
+        p_form[["PLAYER_NAME", "PTS", "REB", "AST"]], on="PLAYER_NAME", suffixes=("_ST", "_L10")
     )
     return partite, teams, players
 
@@ -168,9 +173,56 @@ def dati_demo():
             "MIN": [36.0, 35.0, 34.5, 33.0],
             "PTS_ST": [27.0, 25.0, 26.5, 24.0],
             "PTS_L10": [29.0, 23.0, 28.0, 26.0],
+            "REB_ST": [8.5, 7.5, 12.4, 4.4],
+            "REB_L10": [9.0, 7.0, 13.0, 4.0],
+            "AST_ST": [4.9, 8.3, 9.0, 6.1],
+            "AST_L10": [5.0, 8.0, 9.5, 6.5],
         }
     )
     return partite, teams, players
+
+
+# ----------------------------------------------------------------- SQUADRE
+# sigla: (nome completo, nome breve, colore)
+SQUADRE = {
+    "ATL": ("Atlanta Hawks", "Hawks", "#E03A3E"), "BOS": ("Boston Celtics", "Celtics", "#2a9d5c"),
+    "BKN": ("Brooklyn Nets", "Nets", "#8a8f98"), "CHA": ("Charlotte Hornets", "Hornets", "#1D9BB4"),
+    "CHI": ("Chicago Bulls", "Bulls", "#CE1141"), "CLE": ("Cleveland Cavaliers", "Cavaliers", "#B0305A"),
+    "DAL": ("Dallas Mavericks", "Mavericks", "#2a7fc1"), "DEN": ("Denver Nuggets", "Nuggets", "#FEC524"),
+    "DET": ("Detroit Pistons", "Pistons", "#C8102E"), "GSW": ("Golden State Warriors", "Warriors", "#FFC72C"),
+    "GS": ("Golden State Warriors", "Warriors", "#FFC72C"), "HOU": ("Houston Rockets", "Rockets", "#CE1141"),
+    "IND": ("Indiana Pacers", "Pacers", "#FDBB30"), "LAC": ("Los Angeles Clippers", "Clippers", "#C8102E"),
+    "LAL": ("Los Angeles Lakers", "Lakers", "#FDB927"), "MEM": ("Memphis Grizzlies", "Grizzlies", "#5D76A9"),
+    "MIA": ("Miami Heat", "Heat", "#C4163F"), "MIL": ("Milwaukee Bucks", "Bucks", "#2a8a4a"),
+    "MIN": ("Minnesota Timberwolves", "Timberwolves", "#4b8fd0"), "NOP": ("New Orleans Pelicans", "Pelicans", "#B49C6A"),
+    "NO": ("New Orleans Pelicans", "Pelicans", "#B49C6A"), "NYK": ("New York Knicks", "Knicks", "#F58426"),
+    "NY": ("New York Knicks", "Knicks", "#F58426"), "OKC": ("Oklahoma City Thunder", "Thunder", "#007AC1"),
+    "ORL": ("Orlando Magic", "Magic", "#0077C0"), "PHI": ("Philadelphia 76ers", "76ers", "#2a7fd0"),
+    "PHX": ("Phoenix Suns", "Suns", "#E56020"), "POR": ("Portland Trail Blazers", "Trail Blazers", "#E03A3E"),
+    "SAC": ("Sacramento Kings", "Kings", "#8e5cc2"), "SAS": ("San Antonio Spurs", "Spurs", "#C4CED4"),
+    "SA": ("San Antonio Spurs", "Spurs", "#C4CED4"), "TOR": ("Toronto Raptors", "Raptors", "#CE1141"),
+    "UTA": ("Utah Jazz", "Jazz", "#F9A01B"), "UTAH": ("Utah Jazz", "Jazz", "#F9A01B"),
+    "WAS": ("Washington Wizards", "Wizards", "#E31837"), "WSH": ("Washington Wizards", "Wizards", "#E31837"),
+}
+
+
+def nome_squadra(ab, breve=False):
+    t = SQUADRE.get(ab)
+    return (t[1] if breve else t[0]) if t else ab
+
+
+def etichetta(casa, trasf):
+    return f"{nome_squadra(trasf, True)} @ {nome_squadra(casa, True)}"
+
+
+def _testo_su(colore):
+    r, g, b = (int(colore[i:i + 2], 16) for i in (1, 3, 5))
+    return "#0f1115" if (0.299 * r + 0.587 * g + 0.114 * b) > 150 else "#ffffff"
+
+
+def badge(ab):
+    col = SQUADRE.get(ab, ("", "", "#4a5060"))[2]
+    return f'<span class="badge" style="background:{col};color:{_testo_su(col)}">{html.escape(str(ab))}</span>'
 
 
 # ------------------------------------------------------------------ ESPN
@@ -255,7 +307,7 @@ def carica_espn():
     diag.append(f"squadre: {len(teams)}")
 
     # 3) punti e minuti dei giocatori (sperimentale: se fallisce, restano squadre e totale)
-    cols = ["PLAYER_NAME", "TEAM_ABBREVIATION", "MIN", "PTS_ST", "PTS_L10"]
+    cols = ["PLAYER_NAME", "TEAM_ABBREVIATION", "MIN", "PTS_ST", "PTS_L10", "REB_ST", "REB_L10", "AST_ST", "AST_L10"]
     righe_p = []
     try:
         oggi = datetime.now()
@@ -274,9 +326,12 @@ def carica_espn():
                   or nomi.get(str(info.get("teamShortName", "")).lower())
                   or nomi.get(str(info.get("teamName", "")).lower()))
             if ab and v.get("avgPoints") is not None and v.get("avgMinutes") is not None:
+                reb = float(v.get("avgRebounds") or 0.0)
+                ast = float(v.get("avgAssists") or 0.0)
                 righe_p.append({"PLAYER_NAME": info.get("displayName"), "TEAM_ABBREVIATION": ab,
                                 "MIN": float(v["avgMinutes"]), "PTS_ST": float(v["avgPoints"]),
-                                "PTS_L10": float(v["avgPoints"])})
+                                "PTS_L10": float(v["avgPoints"]), "REB_ST": reb, "REB_L10": reb,
+                                "AST_ST": ast, "AST_L10": ast})
         diag.append(f"giocatori: {len(righe_p)} (su {len(pj.get('athletes', []))} ricevuti)")
     except Exception as e:
         diag.append(f"giocatori: ERRORE {type(e).__name__}")
@@ -326,15 +381,22 @@ def proietta_giocatori(sigla, avversaria, fattore_pace, teams, players, esclusi)
         & (players["MIN"] >= MIN_MINUTI)
         & (~players["PLAYER_NAME"].isin(esclusi))
     ].copy()
-    base = PESO_FORMA * df["PTS_L10"] + (1 - PESO_FORMA) * df["PTS_ST"]
-    df["atteso"] = (base * f_dif * fattore_pace).round(1)
+
+    def mix(l10, st_):
+        return PESO_FORMA * df[l10] + (1 - PESO_FORMA) * df[st_]
+
+    df["atteso"] = (mix("PTS_L10", "PTS_ST") * f_dif * fattore_pace).round(1)
+    df["reb"] = (mix("REB_L10", "REB_ST") * fattore_pace).round(1)
+    df["ast"] = (mix("AST_L10", "AST_ST") * fattore_pace).round(1)
     df["forma"] = df["PTS_L10"].round(1)
     df["stagione"] = df["PTS_ST"].round(1)
+    df["reb_st"] = df["REB_ST"].round(1)
+    df["ast_st"] = df["AST_ST"].round(1)
     df["minuti"] = df["MIN"].round(1)
     df["dif"] = f_dif
-    return df[["PLAYER_NAME", "atteso", "forma", "stagione", "minuti", "dif"]].rename(
-        columns={"PLAYER_NAME": "giocatore"}
-    ).sort_values("atteso", ascending=False)
+    df["squadra"] = sigla
+    return df[["PLAYER_NAME", "squadra", "atteso", "reb", "ast", "forma", "stagione", "reb_st", "ast_st",
+               "minuti", "dif"]].rename(columns={"PLAYER_NAME": "giocatore"}).sort_values("atteso", ascending=False)
 
 
 def forza(z):
@@ -349,19 +411,29 @@ def segno(x):
     return f"{x:+g}"
 
 
+# nome: (prefisso chiave linea, colonna stima, colonna media stagione, unità)
+MERCATI = {
+    "Punti": ("pl_", "atteso", "stagione", "pt"),
+    "Rimbalzi": ("rb_", "reb", "reb_st", "rimb."),
+    "Assist": ("as_", "ast", "ast_st", "ass."),
+}
+STD_MERCATO = {"Punti": 6.0, "Rimbalzi": 2.5, "Assist": 2.0}
+
+
 def giocate_da_linee(proiezioni, gioc_df, linee):
     """Confronta stime e linee inserite. Ritorna lista di giocate ordinate per forza."""
     out = []
     for (casa, trasf), r in proiezioni.items():
+        part = etichetta(casa, trasf)
         lt = linee.get(f"tot_{casa}")
         if lt:
             diff = r["totale"] - lt
             lato = "Over" if diff > 0 else "Under"
             out.append(
-                dict(id=f"tot_{casa}", partita=f"{trasf} @ {casa}", tipo="Totale",
-                     testo=f"{lato} {lt:g}", atteso=f"{r['totale']:.1f}",
-                     diff=abs(diff), z=abs(diff) / STD["Totale"],
-                     motivo=(f"Stima {r['totale']:.1f} punti ({casa} {r['pt_casa']:.1f} + {trasf} {r['pt_trasf']:.1f}), "
+                dict(id=f"tot_{casa}", partita=part, tipo="Totale", testo=f"{lato} {lt:g}",
+                     stima=f"{r['totale']:.1f}", diff=abs(diff), z=abs(diff) / STD["Totale"],
+                     motivo=(f"Stima {r['totale']:.1f} punti ({nome_squadra(casa, True)} {r['pt_casa']:.1f} + "
+                             f"{nome_squadra(trasf, True)} {r['pt_trasf']:.1f}), "
                              f"{abs(diff):.1f} {'sopra' if diff > 0 else 'sotto'} la linea {lt:g}."))
             )
         ls = linee.get(f"spr_{casa}")
@@ -369,29 +441,36 @@ def giocate_da_linee(proiezioni, gioc_df, linee):
             # ls = handicap della squadra di casa (es. -4.5). Casa copre se margine + ls > 0
             diff = r["margine_casa"] + ls
             if diff > 0:
-                testo = f"{casa} {segno(ls)}"
+                testo = f"{nome_squadra(casa, True)} {segno(ls)}"
             else:
-                testo = f"{trasf} {segno(-ls)}"
+                testo = f"{nome_squadra(trasf, True)} {segno(-ls)}"
             out.append(
-                dict(id=f"spr_{casa}", partita=f"{trasf} @ {casa}", tipo="Spread",
-                     testo=testo, atteso=f"margine {casa} {r['margine_casa']:+.1f}",
+                dict(id=f"spr_{casa}", partita=part, tipo="Spread", testo=testo,
+                     stima=f"{nome_squadra(casa, True)} {r['margine_casa']:+.1f}",
                      diff=abs(diff), z=abs(diff) / STD["Spread"],
-                     motivo=(f"Margine stimato {casa} {r['margine_casa']:+.1f}. Con handicap {casa} {segno(ls)} "
-                             f"il segnale è di {abs(diff):.1f} punti a favore di: {testo}."))
+                     motivo=(f"Margine stimato {nome_squadra(casa, True)} {r['margine_casa']:+.1f}. "
+                             f"Con handicap {segno(ls)} per i padroni di casa il segnale è di {abs(diff):.1f} "
+                             f"punti a favore di: {testo}."))
             )
     for (casa, trasf), df in gioc_df.items():
+        part = etichetta(casa, trasf)
         for _, p in df.iterrows():
-            lp = linee.get(f"pl_{p['giocatore']}")
-            if lp:
-                diff = p["atteso"] - lp
+            for mercato, (pref, col, col_st, unita) in MERCATI.items():
+                lp = linee.get(f"{pref}{p['giocatore']}")
+                if not lp:
+                    continue
+                val = p[col]
+                diff = val - lp
                 lato = "over" if diff > 0 else "under"
+                extra = ""
+                if mercato == "Punti":
+                    extra = f" Difesa avversaria {'più permeabile' if p['dif'] > 1 else 'più solida'} della media."
                 out.append(
-                    dict(id=f"pl_{p['giocatore']}", partita=f"{trasf} @ {casa}", tipo="Giocatore",
-                         testo=f"{p['giocatore']} {lato} {lp:g} pt", atteso=f"{p['atteso']:.1f}",
-                         diff=abs(diff), z=abs(diff) / STD["Giocatore"],
-                         motivo=(f"Stima {p['atteso']:.1f} punti (stagione {p['stagione']:.1f}, forma {p['forma']:.1f}, "
-                                 f"{p['minuti']:.0f} min), {abs(diff):.1f} {'sopra' if diff > 0 else 'sotto'} la linea {lp:g}. "
-                                 f"Difesa avversaria {'più permeabile' if p['dif'] > 1 else 'più solida'} della media."))
+                    dict(id=f"{pref}{p['giocatore']}", partita=part, tipo=mercato,
+                         testo=f"{p['giocatore']} {lato} {lp:g} {unita}", stima=f"{val:.1f}",
+                         diff=abs(diff), z=abs(diff) / STD_MERCATO[mercato],
+                         motivo=(f"Stima {val:.1f} {unita} (media stagione {p[col_st]:.1f}, {p['minuti']:.0f} min), "
+                                 f"{abs(diff):.1f} {'sopra' if diff > 0 else 'sotto'} la linea {lp:g}.{extra}"))
                 )
     return sorted(out, key=lambda g: g["z"], reverse=True)
 
@@ -481,28 +560,45 @@ def pillola(z):
     return f'<span class="pill" style="color:{col}">{et}</span>'
 
 
+def intestazione(casa, trasf):
+    return (f'{badge(trasf)}<b>{esc(nome_squadra(trasf, True))}</b> <span class="s">@</span> '
+            f'{badge(casa)}<b>{esc(nome_squadra(casa, True))}</b>')
+
+
 def scheda_partita(casa, trasf, r, ora, miglior):
     lt = st.session_state.linee.get(f"tot_{casa}")
-    h = f'<div class="card2"><div class="riga"><b>{esc(trasf)} @ {esc(casa)}</b><span class="s">{esc(ora)}</span></div>'
+    h = f'<div class="card2"><div class="riga"><div>{intestazione(casa, trasf)}</div><span class="s">{esc(ora)}</span></div>'
     h += gauge(r["totale"], lt)
     if miglior:
-        h += f'<div class="riga" style="margin-top:8px"><span>{esc(miglior["testo"])}</span>{pillola(miglior["z"])}</div>'
+        h += (f'<div class="riga" style="margin-top:8px"><span>Gioca: <b>{esc(miglior["testo"])}</b> '
+              f'<span class="s">(stima {esc(miglior["stima"])})</span></span>{pillola(miglior["z"])}</div>')
     else:
         h += '<div class="s" style="margin-top:8px">Nessuna linea inserita</div>'
     return h + "</div>"
 
 
-def barra_giocatore(p, lp):
-    scala = max(40.0, p["atteso"] * 1.3, (lp or 0) * 1.3)
+def scheda_giocatore(p, mercato, lp):
+    pref, col, col_st, unita = MERCATI[mercato]
+    val = p[col]
+    base = {"Punti": 40.0, "Rimbalzi": 16.0, "Assist": 12.0}[mercato]
+    scala = max(base, val * 1.3, (lp or 0) * 1.3)
     marcatore = ""
     if lp:
         marcatore = f'<div style="position:absolute;left:{lp / scala * 100}%;top:-3px;width:2px;height:14px;background:#f2f2f2"></div>'
+
+    def tile(nome, valore, attivo):
+        bordo = f"border-color:{ARANCIO};" if attivo else ""
+        return f'<div class="tile" style="{bordo}"><b>{valore:.1f}</b><span>{nome}</span></div>'
+
+    nota = f"Stima {val:.1f} {unita}" + (f" · linea {lp:g}" if lp else "")
     return (
-        f'<div class="card2"><div class="riga"><b>{esc(p["giocatore"])}</b>'
+        f'<div class="card2"><div class="riga"><div>{badge(p["squadra"])}<b>{esc(p["giocatore"])}</b></div>'
         f'<span class="s">{p["minuti"]:.0f} min</span></div>'
-        f'<div style="position:relative;height:8px;background:#2a2f3a;border-radius:4px;margin:12px 0 6px">'
-        f'<div style="width:{p["atteso"] / scala * 100}%;height:8px;background:{ARANCIO};border-radius:4px"></div>{marcatore}</div>'
-        f'<div class="riga"><span class="s">Stima {p["atteso"]:.1f} · forma {p["forma"]:.1f} · stagione {p["stagione"]:.1f}</span></div></div>'
+        f'<div class="tre">{tile("Punti", p["atteso"], mercato == "Punti")}'
+        f'{tile("Rimbalzi", p["reb"], mercato == "Rimbalzi")}{tile("Assist", p["ast"], mercato == "Assist")}</div>'
+        f'<div style="position:relative;height:8px;background:#2a2f3a;border-radius:4px;margin:14px 0 6px">'
+        f'<div style="width:{val / scala * 100}%;height:8px;background:{ARANCIO};border-radius:4px"></div>{marcatore}</div>'
+        f'<div class="s">{nota}</div></div>'
     )
 
 
@@ -518,8 +614,8 @@ def elenco_consigli(giocate):
             if nome != "Debole":
                 st.markdown(f"**{titolo}**")
             for gi in gruppi[nome]:
-                card(f"{gi['partita']} · {gi['tipo']}", gi["testo"], f"{gi['diff']:.1f} pt",
-                     f"stima {gi['atteso']}", forza(gi["z"])[1])
+                card(f"{gi['partita']} · {gi['tipo']}", f"Gioca: {gi['testo']}", gi["stima"],
+                     f"stima · {nome}", forza(gi["z"])[1])
                 st.caption(gi["motivo"])
 
 
@@ -533,8 +629,8 @@ if "vista" not in st.session_state:
     st.session_state.vista = "Giornata"
 
 
-def vai_studio(etichetta):
-    st.session_state.partita = etichetta
+def vai_studio(etich):
+    st.session_state.partita = etich
     st.session_state.vista = "Studio partita"
 
 
@@ -546,14 +642,15 @@ if vista == "Giornata":
     forti = sum(1 for g in giocate if forza(g["z"])[0] == "Forte")
     st.caption(f"{len(proiezioni)} partite · {forti} segnali forti · {len(giocate)} giocate analizzate")
     for (casa, trasf), r in proiezioni.items():
-        st.markdown(scheda_partita(casa, trasf, r, ore.get((casa, trasf), ""),
-                                   miglior.get(f"{trasf} @ {casa}")), unsafe_allow_html=True)
-        st.button("Studia questa partita", key=f"vai_{casa}", on_click=vai_studio,
-                  args=(f"{trasf} @ {casa}",), use_container_width=True)
+        et = etichetta(casa, trasf)
+        st.markdown(scheda_partita(casa, trasf, r, ore.get((casa, trasf), ""), miglior.get(et)),
+                    unsafe_allow_html=True)
+        st.button("Studia questa partita", key=f"vai_{casa}", on_click=vai_studio, args=(et,),
+                  use_container_width=True)
     st.markdown("### Consigli ordinati")
     if giocate:
-        st.caption("Ogni consiglio confronta la stima dell'app con la linea del bookmaker. "
-                   "Più la distanza è grande, più il segnale è forte. È un'indicazione, non una certezza.")
+        st.caption("Ogni consiglio indica cosa giocare e la stima dell'app. "
+                   "Più la distanza dalla linea è grande, più il segnale è forte. È un'indicazione, non una certezza.")
         elenco_consigli(giocate)
     else:
         st.info("Nessun consiglio ancora: apri «Studio partita» e inserisci le linee "
@@ -561,11 +658,12 @@ if vista == "Giornata":
 
 # ----------------------------------------------------------- STUDIO PARTITA
 else:
-    opzioni = [f"{t} @ {c}" for (c, t) in proiezioni]
+    mappa = {etichetta(c, t): (c, t) for (c, t) in proiezioni}
+    opzioni = list(mappa)
     if st.session_state.get("partita") not in opzioni:
         st.session_state.partita = opzioni[0]
     scelta = st.pills("Partita", opzioni, key="partita", label_visibility="collapsed") or opzioni[0]
-    trasf, casa = [x.strip() for x in scelta.split("@")]
+    casa, trasf = mappa[scelta]
     r = proiezioni[(casa, trasf)]
     d = gioc_df[(casa, trasf)]
     marg = r["margine_casa"]
@@ -574,19 +672,20 @@ else:
 
     st.markdown(
         f'<div class="card2"><div class="riga" style="align-items:flex-end">'
-        f'<div><div class="s">{esc(casa)} casa</div><div class="grande">{r["pt_casa"]:.1f}</div></div>'
-        f'<div class="s">{esc(ore.get((casa, trasf), ""))}</div>'
-        f'<div style="text-align:right"><div class="s">{esc(trasf)}</div><div class="grande">{r["pt_trasf"]:.1f}</div></div></div>'
+        f'<div><div class="s">{badge(casa)}{esc(nome_squadra(casa))} · casa</div><div class="grande">{r["pt_casa"]:.1f}</div></div>'
+        f'<div style="text-align:right"><div class="s">{esc(nome_squadra(trasf))}{badge(trasf).replace("margin-right:6px", "margin-left:6px")}</div>'
+        f'<div class="grande">{r["pt_trasf"]:.1f}</div></div></div>'
         f'<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:10px">'
         f'<div style="width:{quota_casa}%;background:{ARANCIO}"></div><div style="flex:1;background:#4a5060"></div></div>'
-        f'<div class="s" style="margin-top:6px">Favorita {esc(fav)} di {abs(marg):.1f} punti</div></div>',
+        f'<div class="s" style="margin-top:6px">{esc(ore.get((casa, trasf), ""))} · Favorita {esc(nome_squadra(fav, True))} '
+        f'di {abs(marg):.1f} punti</div></div>',
         unsafe_allow_html=True,
     )
 
     st.markdown("### Totale e spread")
     gt = per_id.get(f"tot_{casa}")
     st.markdown(
-        f'<div class="card2"><div class="riga"><span class="s">Over/Under</span>'
+        f'<div class="card2"><div class="riga"><span class="s">Over/Under (punti totali)</span>'
         f'{pillola(gt["z"]) if gt else ""}</div>'
         f'{gauge(r["totale"], st.session_state.linee.get(f"tot_{casa}"))}</div>',
         unsafe_allow_html=True,
@@ -595,13 +694,13 @@ else:
     with c1:
         campo_linea(f"tot_{casa}", "Linea Over/Under")
     with c2:
-        campo_linea(f"spr_{casa}", f"Handicap {casa} (es. -4.5)", minimo=-60.0)
+        campo_linea(f"spr_{casa}", f"Handicap {nome_squadra(casa, True)} (es. -4.5)", minimo=-60.0)
     trovati = [per_id[k] for k in (f"tot_{casa}", f"spr_{casa}") if k in per_id]
     for gi in trovati:
-        card(gi["tipo"], gi["testo"], f"{gi['diff']:.1f} pt", f"stima {gi['atteso']}", forza(gi["z"])[1])
+        card(gi["tipo"], f"Gioca: {gi['testo']}", gi["stima"], f"stima · {forza(gi['z'])[0]}", forza(gi["z"])[1])
         st.caption(gi["motivo"])
     if not trovati:
-        st.caption("Inserisci le linee per ricevere il consiglio.")
+        st.caption(f"Senza linea: punti totali stimati {r['totale']:.1f}. Inserisci la linea per ricevere il consiglio.")
 
     st.markdown("### Giocatori")
     if players.empty:
@@ -610,18 +709,24 @@ else:
         rosa = players[(players["TEAM_ABBREVIATION"].isin([casa, trasf])) & (players["MIN"] >= MIN_MINUTI)]
         tutti = sorted(set(rosa["PLAYER_NAME"]) | set(st.session_state.esclusi))
         st.pills("Tocca i giocatori che sono out", tutti, selection_mode="multi", key="esclusi")
+        if "mercato" not in st.session_state:
+            st.session_state.mercato = "Punti"
+        mercato = st.pills("Mercato su cui inserire la linea", list(MERCATI), key="mercato") or "Punti"
+        pref, col, col_st, unita = MERCATI[mercato]
         for _, p in d.iterrows():
-            lp = st.session_state.linee.get(f"pl_{p['giocatore']}")
-            st.markdown(barra_giocatore(p, lp), unsafe_allow_html=True)
-            campo_linea(f"pl_{p['giocatore']}", "Linea punti", segnaposto=f"Linea punti (es. {round(p['atteso'] * 2) / 2:g})")
-            gi = per_id.get(f"pl_{p['giocatore']}")
+            chiave = f"{pref}{p['giocatore']}"
+            st.markdown(scheda_giocatore(p, mercato, st.session_state.linee.get(chiave)), unsafe_allow_html=True)
+            campo_linea(chiave, f"Linea {mercato.lower()}",
+                        segnaposto=f"Linea {mercato.lower()} (es. {round(p[col] * 2) / 2:g})")
+            gi = per_id.get(chiave)
             if gi:
-                st.caption(f"**{gi['testo']}** ({forza(gi['z'])[0]}). {gi['motivo']}")
+                st.caption(f"**Gioca: {gi['testo']}** ({forza(gi['z'])[0]}). {gi['motivo']}")
 
     st.markdown("### Da controllare prima di decidere")
     note = ["Infortuni e formazioni: l'app non li legge ancora. Segna i giocatori out e controlla le "
             "ultime notizie poco prima della partita.",
-            "Back-to-back e riposi: non sono considerati nel calcolo."]
+            "Back-to-back e riposi: non sono considerati nel calcolo.",
+            "Rimbalzi e assist: stima semplice basata sulla media e sul ritmo di gioco, meno precisa dei punti."]
     if "ESPN" in modo:
         note.append("Con la fonte ESPN la forma recente non è disponibile: le stime dei giocatori usano la media stagionale.")
     if abs(marg) >= 10:
