@@ -4,7 +4,11 @@ Dati: nba_api (gratuita). Se non risponde parte la modalità DEMO.
 Le linee dei bookmaker si inseriscono a mano (per ora).
 Avvio:  streamlit run app.py
 """
+import re
+from datetime import datetime
+
 import pandas as pd
+import requests
 import streamlit as st
 
 st.set_page_config(page_title="NBA Schedine", page_icon="🏀", layout="centered")
@@ -108,6 +112,134 @@ def dati_demo():
         }
     )
     return partite, teams, players
+
+
+# ------------------------------------------------------------------ ESPN
+ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
+ESPN_V2 = "https://site.api.espn.com/apis/v2/sports/basketball/nba"
+ESPN_ATL = "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/statistics/byathlete"
+
+
+def _get(url, params=None):
+    r = requests.get(url, params=params, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    return r.json()
+
+
+def _entries(node):
+    """Trova ricorsivamente le righe di classifica (ognuna ha 'team' e 'stats')."""
+    if isinstance(node, dict):
+        if isinstance(node.get("entries"), list):
+            yield from node["entries"]
+        for v in node.values():
+            yield from _entries(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _entries(v)
+
+
+@st.cache_data(ttl=1800, show_spinner="Scarico i dati NBA (ESPN)...")
+def carica_espn():
+    diag = []
+    # 1) partite di oggi + linee dei bookmaker (se ESPN le fornisce)
+    try:
+        sb = _get(f"{ESPN}/scoreboard")
+    except Exception as e:
+        raise RuntimeError(f"ESPN partite: {type(e).__name__}")
+    righe, linee = [], {}
+    for ev in sb.get("events", []):
+        comp = ev["competitions"][0]
+        casa = next(c for c in comp["competitors"] if c["homeAway"] == "home")["team"]["abbreviation"]
+        trasf = next(c for c in comp["competitors"] if c["homeAway"] == "away")["team"]["abbreviation"]
+        stato = ev.get("status", {}).get("type", {})
+        if stato.get("state") == "pre":
+            ora = pd.to_datetime(ev["date"], utc=True).tz_convert("Europe/Rome").strftime("%d/%m %H:%M")
+        else:
+            ora = stato.get("shortDetail", "")
+        righe.append({"casa": casa, "trasf": trasf, "ora": ora})
+        for o in comp.get("odds", [])[:1]:
+            if o.get("overUnder"):
+                linee[f"tot_{casa}"] = float(o["overUnder"])
+            m = re.match(r"^([A-Z]{2,4})\s+([+-]?\d+(?:\.\d+)?)$", str(o.get("details", "")).strip())
+            if m:
+                n = float(m.group(2))
+                linee[f"spr_{casa}"] = n if m.group(1) == casa else -n
+    partite = pd.DataFrame(righe, columns=["casa", "trasf", "ora"])
+    diag.append(f"partite: {len(partite)}, linee trovate: {len(linee)}")
+
+    # 2) punti fatti e subiti per squadra
+    try:
+        cl = _get(f"{ESPN_V2}/standings")
+    except Exception as e:
+        raise RuntimeError(f"ESPN squadre: {type(e).__name__}")
+    righe_t, nomi, visti = [], {}, set()
+    for en in _entries(cl):
+        team = en.get("team", {})
+        s = {x.get("name"): x.get("value") for x in en.get("stats", []) if isinstance(x, dict)}
+        visti.update(s.keys())
+        pf, pa = s.get("avgPointsFor"), s.get("avgPointsAgainst")
+        if pf is None and s.get("pointsFor") and s.get("gamesPlayed"):
+            pf, pa = s["pointsFor"] / s["gamesPlayed"], s["pointsAgainst"] / s["gamesPlayed"]
+        if pf is None or pa is None or not team.get("abbreviation"):
+            continue
+        ab = team["abbreviation"]
+        # PACE fisso a 100: il modello usa direttamente i punti medi fatti/subiti
+        righe_t.append({"TEAM_ABBREVIATION": ab, "PACE": 100.0, "OFF_RATING": float(pf), "DEF_RATING": float(pa)})
+        for k in ("abbreviation", "shortDisplayName", "name", "displayName", "location"):
+            if team.get(k):
+                nomi[str(team[k]).lower()] = ab
+        if team.get("id"):
+            nomi["id:" + str(team["id"])] = ab
+    if not righe_t:
+        raise RuntimeError("ESPN squadre: statistiche non trovate (nomi visti: " + ", ".join(sorted(map(str, visti)))[:200] + ")")
+    teams = pd.DataFrame(righe_t).drop_duplicates("TEAM_ABBREVIATION").set_index("TEAM_ABBREVIATION")
+    diag.append(f"squadre: {len(teams)}")
+
+    # 3) punti e minuti dei giocatori (sperimentale: se fallisce, restano squadre e totale)
+    cols = ["PLAYER_NAME", "TEAM_ABBREVIATION", "MIN", "PTS_ST", "PTS_L10"]
+    righe_p = []
+    try:
+        oggi = datetime.now()
+        stagione = oggi.year + 1 if oggi.month >= 10 else oggi.year
+        pj = _get(ESPN_ATL, {"region": "us", "lang": "en", "contentorigin": "espn", "isqualified": "false",
+                             "page": 1, "limit": 200, "sort": "offensive.avgPoints:desc",
+                             "season": stagione, "seasontype": 2})
+        nomi_col = {c.get("name"): c.get("names", []) for c in pj.get("categories", [])}
+        for a in pj.get("athletes", []):
+            v = {}
+            for c in a.get("categories", []):
+                for n, x in zip(nomi_col.get(c.get("name"), []), c.get("values", [])):
+                    v[n] = x
+            info = a.get("athlete", {})
+            ab = (nomi.get("id:" + str(info.get("teamId")))
+                  or nomi.get(str(info.get("teamShortName", "")).lower())
+                  or nomi.get(str(info.get("teamName", "")).lower()))
+            if ab and v.get("avgPoints") is not None and v.get("avgMinutes") is not None:
+                righe_p.append({"PLAYER_NAME": info.get("displayName"), "TEAM_ABBREVIATION": ab,
+                                "MIN": float(v["avgMinutes"]), "PTS_ST": float(v["avgPoints"]),
+                                "PTS_L10": float(v["avgPoints"])})
+        diag.append(f"giocatori: {len(righe_p)} (su {len(pj.get('athletes', []))} ricevuti)")
+    except Exception as e:
+        diag.append(f"giocatori: ERRORE {type(e).__name__}")
+    players = pd.DataFrame(righe_p, columns=cols)
+    return partite, teams, players, linee, diag
+
+
+def carica_tutto():
+    """Prova ESPN, poi nba_api, poi dati di esempio."""
+    errori = []
+    try:
+        p, t, pl, linee, diag = carica_espn()
+        return p, t, pl, linee, diag, "LIVE (ESPN)", errori
+    except Exception as e:
+        errori.append(str(e)[:200])
+    try:
+        p, t, pl = carica_dati_live()
+        return p, t, pl, {}, [], "LIVE (nba_api)", errori
+    except Exception as e:
+        errori.append(f"nba_api: {type(e).__name__}")
+    p, t, pl = dati_demo()
+    return p, t, pl, {}, [], "DEMO", errori
 
 
 # ---------------------------------------------------------------- MODELLO
@@ -219,15 +351,15 @@ def campo_linea(chiave, etichetta, minimo=0.0):
 # ------------------------------------------------------------------- DATI
 st.title("🏀 NBA Schedine")
 
-try:
-    partite, teams, players = carica_dati_live()
-    modo = "LIVE"
-except Exception as e:
-    partite, teams, players = dati_demo()
-    modo = "DEMO"
-    st.warning(f"Dati live non disponibili ({type(e).__name__}). Uso dati di esempio.")
+partite, teams, players, linee_auto, diag, modo, errori = carica_tutto()
+if modo == "DEMO":
+    st.warning("Dati live non disponibili: " + " | ".join(errori) + ". Uso dati di esempio.")
+for k, v in linee_auto.items():
+    st.session_state.linee.setdefault(k, v)
 
 st.caption(f"Dati: {modo} · Strumento di supporto, non garantisce vincite.")
+if linee_auto:
+    st.caption("Alcune linee sono precompilate da ESPN: controllale sul tuo bookmaker prima di giocare.")
 
 if partite.empty:
     st.info("Nessuna partita in programma oggi.")
@@ -264,7 +396,8 @@ with t_top:
     else:
         st.info("Inserisci le linee dei bookmaker nelle altre schede: qui compariranno le giocate più interessanti.")
         top = pd.concat(gioc_df.values()).sort_values("atteso", ascending=False).head(8)
-        st.caption("Intanto, i giocatori con più punti attesi oggi:")
+        if not top.empty:
+            st.caption("Intanto, i giocatori con più punti attesi oggi:")
         for _, p in top.iterrows():
             card("Punti attesi", p["giocatore"], f"{p['atteso']:.1f}", f"forma {p['forma']:.1f}")
 
@@ -285,6 +418,8 @@ with t_tot:
                 card(gi["tipo"], gi["testo"], f"{gi['diff']:.1f} pt", f"{et} · {gi['atteso']}", col)
 
 with t_gio:
+    if players.empty:
+        st.info("Statistiche dei giocatori non disponibili con questa fonte: restano partite, squadre, totale e spread.")
     scelta = st.selectbox("Partita", [f"{t} @ {c}" for (c, t) in proiezioni])
     if scelta:
         trasf, casa = [x.strip() for x in scelta.split("@")]
@@ -336,3 +471,11 @@ with t_mul:
                 st.warning("Manca la quota per: " + ", ".join(senza))
             if len(scelte) > 4:
                 st.caption("Più eventi metti, più è difficile vincerle tutte.")
+
+with st.expander("Diagnostica dati"):
+    st.write(f"Fonte: **{modo}**")
+    for riga in diag:
+        st.write("• " + riga)
+    for err in errori:
+        st.write("• errore: " + err)
+    st.write(f"Partite: {len(partite)} · Squadre: {len(teams)} · Giocatori: {len(players)}")
