@@ -6,6 +6,7 @@ Avvio:  streamlit run app.py
 """
 import base64
 import html
+import math
 import os
 import re
 from datetime import datetime
@@ -71,7 +72,7 @@ HOME_ADV = 1.5      # vantaggio casa in punti (metà a testa)
 MIN_MINUTI = 20     # giocatori con meno minuti medi vengono ignorati
 PESO_FORMA = 0.6    # peso delle ultime 10 partite rispetto alla stagione
 # Deviazioni tipiche (punti) per confrontare giocate di tipo diverso
-STD = {"Totale": 17.0, "Spread": 11.0, "Giocatore": 6.0}
+STD = {"Totale": 17.0, "Spread": 12.0, "Giocatore": 6.0}
 
 ARANCIO, VERDE, GRIGIO = "#ff7a1a", "#3ddc84", "#9aa0aa"
 
@@ -417,7 +418,70 @@ MERCATI = {
     "Rimbalzi": ("rb_", "reb", "reb_st", "rimb."),
     "Assist": ("as_", "ast", "ast_st", "ass."),
 }
-STD_MERCATO = {"Punti": 6.0, "Rimbalzi": 2.5, "Assist": 2.0}
+PROB_MIN = 0.70  # probabilità minima per consigliare una soglia
+CV_MERCATO = {"Punti": 0.30, "Rimbalzi": 0.40, "Assist": 0.45}   # variabilità tipica (std / media)
+STD_MIN = {"Punti": 3.0, "Rimbalzi": 1.5, "Assist": 1.3}
+# soglie "over" disponibili e soglia minima interessante da consigliare
+SCALINI = {
+    "Punti": ([9.5, 12.5, 14.5, 17.5, 19.5, 22.5, 24.5, 27.5, 29.5, 32.5, 34.5, 39.5], 14.5),
+    "Rimbalzi": ([2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5], 5.5),
+    "Assist": ([1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5], 4.5),
+}
+
+
+def phi(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+
+def std_giocatore(val, minuti, mercato):
+    """Variabilità attesa: più alta per chi gioca pochi minuti (rendimento meno stabile)."""
+    cv = CV_MERCATO[mercato] * (1 + 0.02 * max(0.0, 34.0 - minuti))
+    return max(val * cv, STD_MIN[mercato])
+
+
+def prob_over(val, soglia, sd):
+    return 1 - phi((soglia - val) / sd)
+
+
+def consigli_automatici(proiezioni, gioc_df, n_top=3):
+    """Giocate consigliate senza bisogno delle linee: soglie con probabilità >= 70% secondo il modello."""
+    out = []
+    for (casa, trasf), r in proiezioni.items():
+        part = etichetta(casa, trasf)
+        marg = r["margine_casa"]
+        fav = casa if marg > 0 else trasf
+        pw = phi(abs(marg) / STD["Spread"])
+        if pw >= 0.60:
+            out.append(dict(id=f"auto_win_{casa}", partita=part, tipo="Vincente",
+                            testo=f"{nome_squadra(fav, True)} vince", stima=f"+{abs(marg):.1f}", prob=pw,
+                            motivo=(f"Margine stimato di {abs(marg):.1f} punti a favore di {nome_squadra(fav, True)}: "
+                                    f"probabilità di vittoria circa {pw:.0%}.")))
+        lo = int(r["totale"] - 1.2816 * STD["Totale"])
+        hi = int(r["totale"] + 1.2816 * STD["Totale"]) + 1
+        out.append(dict(id=f"auto_tot_{casa}", partita=part, tipo="Totale",
+                        testo=f"Totale tra {lo} e {hi} punti", stima=f"{r['totale']:.1f}", prob=0.80,
+                        motivo=(f"Stima {r['totale']:.1f} punti totali: con la variabilità tipica di una partita NBA "
+                                f"il risultato cade in questo intervallo 8 volte su 10. Confrontalo con la linea del bookmaker.")))
+        df = gioc_df[(casa, trasf)]
+        for sq in (casa, trasf):
+            ds = df[df["squadra"] == sq]
+            for mercato, (pref, col, col_st, unita) in MERCATI.items():
+                scalini, minimo = SCALINI[mercato]
+                for _, pl in ds.nlargest(n_top, col).iterrows():
+                    val = pl[col]
+                    sd = std_giocatore(val, pl["minuti"], mercato)
+                    buoni = [x for x in scalini if prob_over(val, x, sd) >= PROB_MIN]
+                    if not buoni or max(buoni) < minimo:
+                        continue
+                    soglia = max(buoni)
+                    pr = prob_over(val, soglia, sd)
+                    out.append(dict(
+                        id=f"auto_{pref}{pl['giocatore']}", partita=part, tipo=mercato,
+                        testo=f"{pl['giocatore']} over {soglia:g} {unita}", stima=f"{val:.1f}", prob=pr,
+                        motivo=(f"Stima {val:.1f} {unita} (media stagione {pl[col_st]:.1f}, {pl['minuti']:.0f} min). "
+                                f"Con la variabilità tipica, la probabilità di superare {soglia:g} è circa {pr:.0%}. "
+                                f"Se il bookmaker offre una linea più bassa, c'è valore.")))
+    return sorted(out, key=lambda g: g["prob"], reverse=True)
 
 
 def giocate_da_linee(proiezioni, gioc_df, linee):
@@ -429,12 +493,14 @@ def giocate_da_linee(proiezioni, gioc_df, linee):
         if lt:
             diff = r["totale"] - lt
             lato = "Over" if diff > 0 else "Under"
+            pr = phi(abs(diff) / STD["Totale"])
             out.append(
                 dict(id=f"tot_{casa}", partita=part, tipo="Totale", testo=f"{lato} {lt:g}",
                      stima=f"{r['totale']:.1f}", diff=abs(diff), z=abs(diff) / STD["Totale"],
                      motivo=(f"Stima {r['totale']:.1f} punti ({nome_squadra(casa, True)} {r['pt_casa']:.1f} + "
                              f"{nome_squadra(trasf, True)} {r['pt_trasf']:.1f}), "
-                             f"{abs(diff):.1f} {'sopra' if diff > 0 else 'sotto'} la linea {lt:g}."))
+                             f"{abs(diff):.1f} {'sopra' if diff > 0 else 'sotto'} la linea {lt:g}. "
+                             f"Probabilità stimata: {pr:.0%}."))
             )
         ls = linee.get(f"spr_{casa}")
         if ls is not None:
@@ -444,13 +510,14 @@ def giocate_da_linee(proiezioni, gioc_df, linee):
                 testo = f"{nome_squadra(casa, True)} {segno(ls)}"
             else:
                 testo = f"{nome_squadra(trasf, True)} {segno(-ls)}"
+            pr = phi(abs(diff) / STD["Spread"])
             out.append(
                 dict(id=f"spr_{casa}", partita=part, tipo="Spread", testo=testo,
                      stima=f"{nome_squadra(casa, True)} {r['margine_casa']:+.1f}",
                      diff=abs(diff), z=abs(diff) / STD["Spread"],
                      motivo=(f"Margine stimato {nome_squadra(casa, True)} {r['margine_casa']:+.1f}. "
                              f"Con handicap {segno(ls)} per i padroni di casa il segnale è di {abs(diff):.1f} "
-                             f"punti a favore di: {testo}."))
+                             f"punti a favore di: {testo}. Probabilità stimata: {pr:.0%}."))
             )
     for (casa, trasf), df in gioc_df.items():
         part = etichetta(casa, trasf)
@@ -460,17 +527,20 @@ def giocate_da_linee(proiezioni, gioc_df, linee):
                 if not lp:
                     continue
                 val = p[col]
+                sd = std_giocatore(val, p["minuti"], mercato)
                 diff = val - lp
                 lato = "over" if diff > 0 else "under"
+                pr = prob_over(val, lp, sd) if diff > 0 else 1 - prob_over(val, lp, sd)
                 extra = ""
                 if mercato == "Punti":
                     extra = f" Difesa avversaria {'più permeabile' if p['dif'] > 1 else 'più solida'} della media."
                 out.append(
                     dict(id=f"{pref}{p['giocatore']}", partita=part, tipo=mercato,
                          testo=f"{p['giocatore']} {lato} {lp:g} {unita}", stima=f"{val:.1f}",
-                         diff=abs(diff), z=abs(diff) / STD_MERCATO[mercato],
+                         diff=abs(diff), z=abs(diff) / sd,
                          motivo=(f"Stima {val:.1f} {unita} (media stagione {p[col_st]:.1f}, {p['minuti']:.0f} min), "
-                                 f"{abs(diff):.1f} {'sopra' if diff > 0 else 'sotto'} la linea {lp:g}.{extra}"))
+                                 f"{abs(diff):.1f} {'sopra' if diff > 0 else 'sotto'} la linea {lp:g}. "
+                                 f"Probabilità stimata: {pr:.0%}.{extra}"))
                 )
     return sorted(out, key=lambda g: g["z"], reverse=True)
 
@@ -602,6 +672,40 @@ def scheda_giocatore(p, mercato, lp):
     )
 
 
+def elenco_auto(picks, limite=None):
+    """Giocate consigliate in automatico, divise per probabilità."""
+    mostra = picks if limite is None else picks[:limite]
+    resto = [] if limite is None else picks[limite:]
+    gruppi = (("Molto probabili (80% o più)", [x for x in mostra if x["prob"] >= 0.80], VERDE),
+              ("Probabili (70-80%)", [x for x in mostra if 0.70 <= x["prob"] < 0.80], ARANCIO),
+              ("Da valutare (sotto il 70%)", [x for x in mostra if x["prob"] < 0.70], GRIGIO))
+    for titolo, lista, colore in gruppi:
+        if not lista:
+            continue
+        st.markdown(f"**{titolo}**")
+        for x in lista:
+            card(f"{x['partita']} · {x['tipo']}", x["testo"], f"{x['prob']:.0%}", f"stima {x['stima']}", colore)
+            st.caption(x["motivo"])
+    if resto:
+        with st.expander(f"Altre giocate ({len(resto)})"):
+            for x in resto:
+                card(f"{x['partita']} · {x['tipo']}", x["testo"], f"{x['prob']:.0%}", f"stima {x['stima']}", GRIGIO)
+
+
+def blocco_migliori(df, titolo_html, n=3, mostra_squadra=False):
+    """I migliori per punti, rimbalzi e assist in un gruppo di giocatori."""
+    if df.empty:
+        return ""
+    h = f'<div class="card2"><div class="riga" style="margin-bottom:6px">{titolo_html}</div>'
+    for mercato, (pref, col, col_st, unita) in MERCATI.items():
+        h += f'<div class="s" style="margin-top:8px">{mercato.upper()}</div>'
+        for i, (_, r) in enumerate(df.nlargest(n, col).iterrows(), 1):
+            sq = badge(r["squadra"]) if mostra_squadra else ""
+            h += (f'<div class="riga"><span>{i}. {sq}{esc(r["giocatore"])}</span>'
+                  f'<b style="color:{ARANCIO if i == 1 else "#f2f2f2"}">{r[col]:.1f}</b></div>')
+    return h + "</div>"
+
+
 def elenco_consigli(giocate):
     gruppi = {"Forte": [], "Media": [], "Debole": []}
     for gi in giocate:
@@ -621,6 +725,7 @@ def elenco_consigli(giocate):
 
 # ------------------------------------------------------------- NAVIGAZIONE
 per_id = {g["id"]: g for g in giocate}
+auto = consigli_automatici(proiezioni, gioc_df)
 miglior = {}
 for gi in giocate:
     miglior.setdefault(gi["partita"], gi)
@@ -647,14 +752,23 @@ if vista == "Giornata":
                     unsafe_allow_html=True)
         st.button("Studia questa partita", key=f"vai_{casa}", on_click=vai_studio, args=(et,),
                   use_container_width=True)
-    st.markdown("### Consigli ordinati")
+    st.markdown("### Giocate consigliate dall'app")
+    st.caption("Calcolate in autonomia dalle statistiche: per ogni giocatore l'app trova la soglia che supera "
+               "con probabilità di almeno il 70%. La percentuale è una stima del modello, non una certezza.")
+    auto_giornata = [x for x in auto if x["tipo"] != "Totale"]
+    if auto_giornata:
+        elenco_auto(auto_giornata, limite=12)
+    st.markdown("### I migliori della giornata")
+    if not players.empty:
+        tutti_g = pd.concat(gioc_df.values())
+        st.markdown(blocco_migliori(tutti_g, "<b>Tutte le partite di oggi</b>", n=5, mostra_squadra=True),
+                    unsafe_allow_html=True)
+    st.markdown("### Confronto con le linee del bookmaker")
     if giocate:
-        st.caption("Ogni consiglio indica cosa giocare e la stima dell'app. "
-                   "Più la distanza dalla linea è grande, più il segnale è forte. È un'indicazione, non una certezza.")
+        st.caption("Qui l'app confronta la sua stima con le linee che hai inserito (o che ESPN ha trovato).")
         elenco_consigli(giocate)
     else:
-        st.info("Nessun consiglio ancora: apri «Studio partita» e inserisci le linee "
-                "(se ESPN le ha trovate, sono già compilate).")
+        st.info("Nessuna linea inserita: apri «Studio partita» per aggiungerle e ottenere il confronto.")
 
 # ----------------------------------------------------------- STUDIO PARTITA
 else:
@@ -681,6 +795,18 @@ else:
         f'di {abs(marg):.1f} punti</div></div>',
         unsafe_allow_html=True,
     )
+
+    st.markdown("### Giocate consigliate")
+    auto_partita = [x for x in auto if x["partita"] == etichetta(casa, trasf)]
+    if auto_partita:
+        elenco_auto(auto_partita)
+    st.markdown("### I migliori di ogni squadra")
+    if players.empty:
+        st.info("Statistiche dei giocatori non disponibili con questa fonte.")
+    else:
+        for sq in (casa, trasf):
+            st.markdown(blocco_migliori(d[d["squadra"] == sq], f"{badge(sq)}<b>{esc(nome_squadra(sq))}</b>"),
+                        unsafe_allow_html=True)
 
     st.markdown("### Totale e spread")
     gt = per_id.get(f"tot_{casa}")
