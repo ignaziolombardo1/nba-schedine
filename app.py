@@ -1,5 +1,5 @@
 """NBA Schedine - v2 (stile scuro sportivo).
-Sezioni: Top oggi, Totale e spread, Giocatori, Multipla.
+Sezioni: Consigli (giocate ordinate per forza, con motivazione) e Studio partita.
 Dati: nba_api (gratuita). Se non risponde parte la modalità DEMO.
 Le linee dei bookmaker si inseriscono a mano (per ora).
 Avvio:  streamlit run app.py
@@ -271,7 +271,9 @@ def proietta_giocatori(sigla, avversaria, fattore_pace, teams, players, esclusi)
     df["atteso"] = (base * f_dif * fattore_pace).round(1)
     df["forma"] = df["PTS_L10"].round(1)
     df["stagione"] = df["PTS_ST"].round(1)
-    return df[["PLAYER_NAME", "atteso", "forma", "stagione"]].rename(
+    df["minuti"] = df["MIN"].round(1)
+    df["dif"] = f_dif
+    return df[["PLAYER_NAME", "atteso", "forma", "stagione", "minuti", "dif"]].rename(
         columns={"PLAYER_NAME": "giocatore"}
     ).sort_values("atteso", ascending=False)
 
@@ -299,7 +301,9 @@ def giocate_da_linee(proiezioni, gioc_df, linee):
             out.append(
                 dict(id=f"tot_{casa}", partita=f"{trasf} @ {casa}", tipo="Totale",
                      testo=f"{lato} {lt:g}", atteso=f"{r['totale']:.1f}",
-                     diff=abs(diff), z=abs(diff) / STD["Totale"])
+                     diff=abs(diff), z=abs(diff) / STD["Totale"],
+                     motivo=(f"Stima {r['totale']:.1f} punti ({casa} {r['pt_casa']:.1f} + {trasf} {r['pt_trasf']:.1f}), "
+                             f"{abs(diff):.1f} {'sopra' if diff > 0 else 'sotto'} la linea {lt:g}."))
             )
         ls = linee.get(f"spr_{casa}")
         if ls is not None:
@@ -312,7 +316,9 @@ def giocate_da_linee(proiezioni, gioc_df, linee):
             out.append(
                 dict(id=f"spr_{casa}", partita=f"{trasf} @ {casa}", tipo="Spread",
                      testo=testo, atteso=f"margine {casa} {r['margine_casa']:+.1f}",
-                     diff=abs(diff), z=abs(diff) / STD["Spread"])
+                     diff=abs(diff), z=abs(diff) / STD["Spread"],
+                     motivo=(f"Margine stimato {casa} {r['margine_casa']:+.1f}. Con handicap {casa} {segno(ls)} "
+                             f"il segnale è di {abs(diff):.1f} punti a favore di: {testo}."))
             )
     for (casa, trasf), df in gioc_df.items():
         for _, p in df.iterrows():
@@ -323,7 +329,10 @@ def giocate_da_linee(proiezioni, gioc_df, linee):
                 out.append(
                     dict(id=f"pl_{p['giocatore']}", partita=f"{trasf} @ {casa}", tipo="Giocatore",
                          testo=f"{p['giocatore']} {lato} {lp:g} pt", atteso=f"{p['atteso']:.1f}",
-                         diff=abs(diff), z=abs(diff) / STD["Giocatore"])
+                         diff=abs(diff), z=abs(diff) / STD["Giocatore"],
+                         motivo=(f"Stima {p['atteso']:.1f} punti (stagione {p['stagione']:.1f}, forma {p['forma']:.1f}, "
+                                 f"{p['minuti']:.0f} min), {abs(diff):.1f} {'sopra' if diff > 0 else 'sotto'} la linea {lp:g}. "
+                                 f"Difesa avversaria {'più permeabile' if p['dif'] > 1 else 'più solida'} della media."))
                 )
     return sorted(out, key=lambda g: g["z"], reverse=True)
 
@@ -384,93 +393,95 @@ ore = {(g["casa"], g["trasf"]): g["ora"] for _, g in partite.iterrows()}
 giocate = giocate_da_linee(proiezioni, gioc_df, st.session_state.linee)
 
 # ------------------------------------------------------------------- TABS
-t_top, t_tot, t_gio, t_mul = st.tabs(["Top oggi", "Totale e spread", "Giocatori", "Multipla"])
+t_top, t_stu = st.tabs(["Consigli", "Studio partita"])
+per_id = {g["id"]: g for g in giocate}
 
 with t_top:
-    if giocate:
-        st.caption("Ordinate dalla più lontana dalla linea del bookmaker. È un'indicazione, non una certezza.")
-        for gi in giocate[:15]:
-            et, col = forza(gi["z"])
-            card(f"{gi['partita']} · {gi['tipo']}", gi["testo"], f"{gi['diff']:.1f} pt",
-                 f"{et} · stima {gi['atteso']}", col)
+    if not giocate:
+        st.info("Nessun consiglio ancora: apri «Studio partita» e inserisci le linee del bookmaker "
+                "(se ESPN le ha trovate, sono già compilate).")
     else:
-        st.info("Inserisci le linee dei bookmaker nelle altre schede: qui compariranno le giocate più interessanti.")
-        top = pd.concat(gioc_df.values()).sort_values("atteso", ascending=False).head(8)
-        if not top.empty:
-            st.caption("Intanto, i giocatori con più punti attesi oggi:")
-        for _, p in top.iterrows():
-            card("Punti attesi", p["giocatore"], f"{p['atteso']:.1f}", f"forma {p['forma']:.1f}")
+        st.caption("Ogni consiglio confronta la stima dell'app con la linea del bookmaker. "
+                   "Più la distanza è grande, più il segnale è forte. È un'indicazione, non una certezza.")
+        gruppi = {"Forte": [], "Media": [], "Debole": []}
+        for gi in giocate:
+            gruppi[forza(gi["z"])[0]].append(gi)
+        for nome, titolo in (("Forte", "Segnali forti"), ("Media", "Segnali medi"), ("Debole", "Segnali deboli")):
+            if not gruppi[nome]:
+                continue
+            contenitore = st.expander(f"{titolo} ({len(gruppi[nome])})") if nome == "Debole" else st.container()
+            with contenitore:
+                if nome != "Debole":
+                    st.subheader(titolo)
+                for gi in gruppi[nome]:
+                    col = forza(gi["z"])[1]
+                    card(f"{gi['partita']} · {gi['tipo']}", gi["testo"], f"{gi['diff']:.1f} pt",
+                         f"stima {gi['atteso']}", col)
+                    st.caption(gi["motivo"])
 
-with t_tot:
-    for (casa, trasf), r in proiezioni.items():
-        st.subheader(f"{trasf} @ {casa}")
+with t_stu:
+    scelta = st.selectbox("Partita", [f"{t} @ {c}" for (c, t) in proiezioni])
+    if scelta:
+        trasf, casa = [x.strip() for x in scelta.split("@")]
+        r = proiezioni[(casa, trasf)]
+        d = gioc_df[(casa, trasf)]
+        marg = r["margine_casa"]
+        fav = casa if marg > 0 else trasf
+
+        st.subheader("1. Sintesi")
         st.caption(ore.get((casa, trasf), ""))
         card("Punti attesi", f"{casa} {r['pt_casa']:.1f} · {trasf} {r['pt_trasf']:.1f}",
              f"{r['totale']:.1f}", "totale atteso")
+        card("Squadra favorita", fav, f"{abs(marg):.1f} pt", "margine stimato")
+
+        st.subheader("2. Totale e spread")
         c1, c2 = st.columns(2)
         with c1:
             campo_linea(f"tot_{casa}", "Linea Over/Under")
         with c2:
             campo_linea(f"spr_{casa}", f"Handicap {casa} (es. -4.5)", minimo=-60.0)
-        for gi in giocate:
-            if gi["id"] in (f"tot_{casa}", f"spr_{casa}"):
-                et, col = forza(gi["z"])
-                card(gi["tipo"], gi["testo"], f"{gi['diff']:.1f} pt", f"{et} · {gi['atteso']}", col)
+        trovati = [per_id[k] for k in (f"tot_{casa}", f"spr_{casa}") if k in per_id]
+        for gi in trovati:
+            et, col = forza(gi["z"])
+            card(gi["tipo"], gi["testo"], f"{gi['diff']:.1f} pt", f"{et} · {gi['atteso']}", col)
+            st.caption(gi["motivo"])
+        if not trovati:
+            st.caption("Inserisci le linee per ricevere il consiglio.")
 
-with t_gio:
-    if players.empty:
-        st.info("Statistiche dei giocatori non disponibili con questa fonte: restano partite, squadre, totale e spread.")
-    scelta = st.selectbox("Partita", [f"{t} @ {c}" for (c, t) in proiezioni])
-    if scelta:
-        trasf, casa = [x.strip() for x in scelta.split("@")]
-        d = gioc_df[(casa, trasf)]
-        tutti = sorted(
-            set(players[players["TEAM_ABBREVIATION"].isin([casa, trasf])]["PLAYER_NAME"])
-            | set(st.session_state.esclusi)
-        )
-        st.multiselect("Giocatori out (esclusi dal calcolo)", tutti, key="esclusi")
-        st.caption("Scrivi la linea punti del bookmaker accanto al giocatore.")
-        for _, p in d.iterrows():
-            a, b = st.columns([3, 2])
-            with a:
-                card(f"forma {p['forma']:.1f} · stagione {p['stagione']:.1f}", p["giocatore"],
-                     f"{p['atteso']:.1f}", "punti attesi")
-            with b:
-                campo_linea(f"pl_{p['giocatore']}", "Linea")
-
-with t_mul:
-    if not giocate:
-        st.info("Prima inserisci qualche linea: le giocate compaiono qui e le puoi aggiungere alla schedina.")
-    else:
-        st.caption("Spunta le giocate e scrivi la quota di ognuna.")
-        scelte = []
-        for gi in giocate:
-            a, b = st.columns([3, 2])
-            with a:
-                sel = st.checkbox(f"{gi['testo']} ({gi['partita']})", key="m_" + gi["id"])
-            with b:
-                q = st.number_input("Quota", min_value=1.0, max_value=100.0, value=None,
-                                    step=0.01, key="q_" + gi["id"], label_visibility="collapsed",
-                                    placeholder="Quota")
-            if sel:
-                scelte.append((gi, q))
-        if scelte:
-            senza = [g["testo"] for g, q in scelte if not q]
-            tot = 1.0
-            for g, q in scelte:
-                if q:
-                    tot *= q
-            puntata = st.number_input("Puntata (€)", min_value=0.0, value=5.0, step=1.0)
-            st.markdown(
-                f'<div class="box">Eventi: <b>{len(scelte)}</b><br>'
-                f'Quota totale: <b>{tot:.2f}</b><br>'
-                f'Vincita potenziale: <b>{tot * puntata:.2f} €</b></div>',
-                unsafe_allow_html=True,
+        st.subheader("3. Giocatori")
+        if players.empty:
+            st.info("Statistiche dei giocatori non disponibili con questa fonte.")
+        else:
+            tutti = sorted(
+                set(players[players["TEAM_ABBREVIATION"].isin([casa, trasf])]["PLAYER_NAME"])
+                | set(st.session_state.esclusi)
             )
-            if senza:
-                st.warning("Manca la quota per: " + ", ".join(senza))
-            if len(scelte) > 4:
-                st.caption("Più eventi metti, più è difficile vincerle tutte.")
+            st.multiselect("Giocatori out (esclusi dal calcolo)", tutti, key="esclusi")
+            st.caption("Scrivi la linea punti del bookmaker accanto al giocatore.")
+            for _, p in d.iterrows():
+                a, b = st.columns([3, 2])
+                with a:
+                    card(f"forma {p['forma']:.1f} · stagione {p['stagione']:.1f} · {p['minuti']:.0f} min",
+                         p["giocatore"], f"{p['atteso']:.1f}", "punti attesi")
+                with b:
+                    campo_linea(f"pl_{p['giocatore']}", "Linea")
+                gi = per_id.get(f"pl_{p['giocatore']}")
+                if gi:
+                    st.caption(f"**{gi['testo']}** ({forza(gi['z'])[0]}). {gi['motivo']}")
+
+        st.subheader("4. Da controllare prima di decidere")
+        note = ["Infortuni e formazioni: l'app non li legge ancora. Segna a mano i giocatori out e controlla le "
+                "ultime notizie poco prima della partita.",
+                "Back-to-back e riposi: non sono considerati nel calcolo."]
+        if "ESPN" in modo:
+            note.append("Con la fonte ESPN la forma recente non è disponibile: le stime dei giocatori usano la media stagionale.")
+        if abs(marg) >= 10:
+            note.append("Margine stimato ampio: nei finali sbilanciati i titolari possono giocare meno minuti, "
+                        "con rischio per gli over sui giocatori.")
+        if abs(marg) < 3:
+            note.append("Partita molto equilibrata: lo spread è poco affidabile, conta di più il totale.")
+        for n in note:
+            st.markdown("• " + n)
 
 with st.expander("Diagnostica dati"):
     st.write(f"Fonte: **{modo}**")
