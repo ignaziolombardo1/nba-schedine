@@ -303,10 +303,10 @@ def _leggi_scoreboard(sb):
 
 
 @st.cache_data(ttl=120, show_spinner="Aggiorno partite e punteggi...")
-def carica_partite_espn():
+def carica_partite_espn(giorno=None):
     """Partite di oggi (con punteggi live/finali e linee) e risultati di ieri. Cache breve: 2 minuti."""
     try:
-        sb = _get(f"{ESPN}/scoreboard")
+        sb = _get(f"{ESPN}/scoreboard", {"dates": giorno} if giorno else None)
     except Exception as e:
         raise RuntimeError(f"ESPN partite: {type(e).__name__}")
     righe, linee = _leggi_scoreboard(sb)
@@ -317,8 +317,9 @@ def carica_partite_espn():
             ora_us = datetime.now(ZoneInfo("America/New_York"))
         except Exception:
             ora_us = datetime.utcnow() - timedelta(hours=5)
-        giorno = (ora_us - timedelta(days=1)).strftime("%Y%m%d")
-        righe_ieri, _ = _leggi_scoreboard(_get(f"{ESPN}/scoreboard", {"dates": giorno}))
+        base = datetime.strptime(giorno, "%Y%m%d") if giorno else ora_us
+        g_ieri = (base - timedelta(days=1)).strftime("%Y%m%d")
+        righe_ieri, _ = _leggi_scoreboard(_get(f"{ESPN}/scoreboard", {"dates": g_ieri}))
         ieri = _completa(pd.DataFrame([x for x in righe_ieri if x["stato"] == "post"], columns=COLONNE_PARTITE))
     except Exception:
         pass
@@ -391,11 +392,11 @@ def carica_statistiche_espn():
     return teams, pd.DataFrame(righe_p, columns=cols), diag
 
 
-def carica_tutto():
+def carica_tutto(giorno=None):
     """Prova ESPN, poi nba_api, poi dati di esempio."""
     errori = []
     try:
-        partite, linee, ieri, agg = carica_partite_espn()
+        partite, linee, ieri, agg = carica_partite_espn(giorno)
         teams, players, diag_s = carica_statistiche_espn()
         diag = [f"partite oggi: {len(partite)}, linee trovate: {len(linee)}, risultati di ieri: {len(ieri)}"] + diag_s
         return partite, teams, players, linee, diag, "LIVE (ESPN)", errori, ieri, agg
@@ -669,7 +670,17 @@ def campo_linea(chiave, etichetta, minimo=0.0, segnaposto=None):
 st.markdown('<div class="testata"><div class="logo">🏀</div><div><div class="nome">NBA Schedine</div>'
             '<div class="s">Studio e consigli di giornata</div></div></div>', unsafe_allow_html=True)
 
-partite, teams, players, linee_auto, diag, modo, errori, ieri, aggiornato = carica_tutto()
+try:
+    _adesso_us = datetime.now(ZoneInfo("America/New_York"))
+except Exception:
+    _adesso_us = datetime.utcnow() - timedelta(hours=5)
+GIORNI = {"Ieri": (_adesso_us - timedelta(days=1)).strftime("%Y%m%d"), "Oggi": None,
+          "Domani": (_adesso_us + timedelta(days=1)).strftime("%Y%m%d"),
+          "Dopodomani": (_adesso_us + timedelta(days=2)).strftime("%Y%m%d")}
+if st.session_state.get("giorno_sel") not in GIORNI:
+    st.session_state.giorno_sel = "Oggi"
+giorno_sel = st.segmented_control("Giorno", list(GIORNI), key="giorno_sel", label_visibility="collapsed") or "Oggi"
+partite, teams, players, linee_auto, diag, modo, errori, ieri, aggiornato = carica_tutto(GIORNI[giorno_sel])
 if modo == "DEMO":
     st.warning("Dati live non disponibili: " + " | ".join(errori) + ". Uso dati di esempio.")
 for k, v in linee_auto.items():
@@ -680,7 +691,7 @@ if linee_auto:
     st.caption("Alcune linee sono precompilate da ESPN: controllale sul tuo bookmaker prima di giocare.")
 
 if partite.empty:
-    st.info("Nessuna partita in programma oggi.")
+    st.info(f"Nessuna partita trovata per «{giorno_sel}». Prova un altro giorno.")
     st.stop()
 
 infortuni = {}
@@ -817,6 +828,29 @@ def scheda_partita(casa, trasf, r, info, miglior):
     return h + "</div>"
 
 
+def scala_soglie(p, mercato):
+    """Soglia consigliata (la più alta con probabilità >= 70%) e le altre soglie possibili con la loro probabilità."""
+    pref, col, col_st, unita = MERCATI[mercato]
+    val = p[col]
+    sd = std_giocatore(val, p["minuti"], mercato)
+    righe = [(t, prob_over(val, t, sd)) for t in SCALINI[mercato][0]]
+    righe = [(t, pr) for t, pr in righe if 0.20 <= pr <= 0.97]
+    buone = [t for t, pr in righe if pr >= PROB_MIN]
+    rec = max(buone) if buone else None
+    if rec is not None:
+        testa = (f'<div style="margin-top:10px"><span class="s">CONSIGLIATO</span><div style="font-weight:600;color:{VERDE}">'
+                 f'over {rec:g} {unita} · {dict(righe)[rec]:.0%}</div></div>')
+    else:
+        testa = '<div class="s" style="margin-top:10px">Nessuna soglia sopra il 70%: giocatore poco sicuro.</div>'
+    chips = ""
+    for t, pr in righe:
+        c = VERDE if pr >= 0.70 else (ARANCIO if pr >= 0.50 else GRIGIO)
+        bordo = f"border:1px solid {c};" if t == rec else ""
+        chips += (f'<span class="pill" style="color:{c};{bordo}margin:0 6px 6px 0;display:inline-block">'
+                  f'over {t:g} · {pr:.0%}</span>')
+    return testa + (f'<div class="s" style="margin-top:8px">ALTRE SOGLIE POSSIBILI</div><div style="margin-top:4px">{chips}</div>' if chips else "")
+
+
 def scheda_giocatore(p, mercato, lp):
     pref, col, col_st, unita = MERCATI[mercato]
     val = p[col]
@@ -839,7 +873,7 @@ def scheda_giocatore(p, mercato, lp):
         f'{tile("Rimbalzi", p["reb"], mercato == "Rimbalzi")}{tile("Assist", p["ast"], mercato == "Assist")}</div>'
         f'<div style="position:relative;height:8px;background:#2a2f3a;border-radius:4px;margin:14px 0 6px">'
         f'<div style="width:{val / scala * 100}%;height:8px;background:{ARANCIO};border-radius:4px"></div>{marcatore}</div>'
-        f'<div class="s">{nota}</div></div>'
+        f'<div class="s">{nota}</div>{scala_soglie(p, mercato)}</div>'
     )
 
 
@@ -989,6 +1023,138 @@ def riga_esito(r):
     )
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def carica_ultime(sigla, n=5):
+    """Ultime partite giocate da una squadra (calendario ESPN)."""
+    d = _get(f"{ESPN}/teams/{sigla.lower()}/schedule")
+    out = []
+    for ev in d.get("events", []):
+        comp = (ev.get("competitions") or [{}])[0]
+        stt = (comp.get("status") or ev.get("status") or {}).get("type", {})
+        if not stt.get("completed"):
+            continue
+        mie, loro = None, None
+        for c in comp.get("competitors", []):
+            sc = c.get("score")
+            if isinstance(sc, dict):
+                sc = sc.get("value", sc.get("displayValue"))
+            try:
+                sc = int(float(sc))
+            except Exception:
+                sc = None
+            ab = (c.get("team") or {}).get("abbreviation", "")
+            riga = dict(ab=ab, pt=sc, casa=c.get("homeAway") == "home", win=c.get("winner"))
+            if ab.upper() == sigla.upper():
+                mie = riga
+            else:
+                loro = riga
+        if mie is None or loro is None or mie["pt"] is None or loro["pt"] is None:
+            continue
+        out.append(dict(data=str(ev.get("date", ""))[:10], avv=loro["ab"], casa=mie["casa"],
+                        pf=mie["pt"], pa=loro["pt"], vinta=mie["pt"] > loro["pt"]))
+    return sorted(out, key=lambda x: x["data"])[-n:][::-1]
+
+
+def blocco_ultime(sigla):
+    try:
+        ul = carica_ultime(sigla)
+    except Exception as e:
+        st.caption(f"Ultimi incontri non disponibili ({type(e).__name__}).")
+        return
+    if not ul:
+        st.caption("Nessun incontro recente trovato.")
+        return
+    forma = " ".join("V" if x["vinta"] else "S" for x in ul)
+    medie = (f"Media ultime {len(ul)}: {sum(x['pf'] for x in ul) / len(ul):.1f} fatti, "
+             f"{sum(x['pa'] for x in ul) / len(ul):.1f} subiti · totale {sum(x['pf'] + x['pa'] for x in ul) / len(ul):.1f}")
+    h = f'<div class="s" style="margin-bottom:6px">{esc(medie)}</div>'
+    for x in ul:
+        col = VERDE if x["vinta"] else "#ff5d5d"
+        h += (f'<div class="card2" style="display:flex;align-items:center;gap:10px;padding:8px 12px">'
+              f'<div style="width:26px;height:26px;border-radius:50%;background:{col}22;color:{col};display:flex;'
+              f'align-items:center;justify-content:center;font-weight:700;flex-shrink:0">{"V" if x["vinta"] else "S"}</div>'
+              f'{logo(x["avv"], 24)}<div style="flex:1;min-width:0"><b>{"vs" if x["casa"] else "@"} {esc(nome_squadra(x["avv"], True))}</b>'
+              f'<div class="s">{esc(x["data"])}</div></div><b>{x["pf"]}-{x["pa"]}</b></div>')
+    st.markdown(h, unsafe_allow_html=True)
+    return forma
+
+
+# ---------------------------------------------------------------- REGISTRO
+def db_conf():
+    """Credenziali Supabase da st.secrets (None se non configurato)."""
+    try:
+        return str(st.secrets["SUPABASE_URL"]).rstrip("/"), str(st.secrets["SUPABASE_KEY"])
+    except Exception:
+        return None
+
+
+def _db(metodo, params=None, corpo=None, prefer=None):
+    u, k = db_conf()
+    h = {"apikey": k, "Authorization": f"Bearer {k}", "Content-Type": "application/json"}
+    if prefer:
+        h["Prefer"] = prefer
+    r = requests.request(metodo, f"{u}/rest/v1/consigli", headers=h, params=params, json=corpo, timeout=15)
+    r.raise_for_status()
+    return r.json() if r.text.strip() else []
+
+
+def salva_consigli(picks, info, giorno):
+    """Salva i consigli delle partite non ancora iniziate. Il primo salvataggio vince (non si sovrascrive)."""
+    righe = {}
+    for x in picks:
+        g = info.get(x.get("gara"), {})
+        if g.get("stato") != "pre" or not g.get("id"):
+            continue
+        chiave = f"{g['id']}|{x['tipo']}|{x.get('pid') or x.get('squadra') or ''}"
+        righe[chiave] = dict(chiave=chiave, event_id=str(g["id"]), data=giorno, partita=x["partita"],
+                             tipo=x["tipo"], testo=x["testo"], squadra=x.get("squadra"),
+                             prob=float(x["prob"]), stima=str(x["stima"]))
+    fatte = st.session_state.setdefault("registro_fatto", set())
+    nuove = [r for k, r in righe.items() if k not in fatte]
+    if not nuove:
+        return 0
+    _db("POST", params={"on_conflict": "chiave"}, corpo=nuove, prefer="resolution=ignore-duplicates")
+    fatte.update(r["chiave"] for r in nuove)
+    return len(nuove)
+
+
+def aggiorna_esiti(righe, finite):
+    """Valuta i consigli salvati le cui partite sono finite e scrive l'esito nel registro."""
+    per_evento = {str(g["id"]): g for g in finite.to_dict("records")}
+    box_cache, fatti = {}, 0
+    for r in righe:
+        if r.get("esito") is not None:
+            continue
+        g = per_evento.get(str(r["event_id"]))
+        if g is None:
+            continue
+        box = None
+        if r["tipo"] in STAT_MERCATO:
+            if r["event_id"] not in box_cache:
+                try:
+                    box_cache[r["event_id"]] = carica_boxscore(r["event_id"])
+                except Exception:
+                    box_cache[r["event_id"]] = None
+            box = box_cache[r["event_id"]]
+        esito, det = valuta_giocata(r, g, box)
+        if esito == 2 and r["tipo"] in STAT_MERCATO and box is None:
+            continue  # riprova più tardi
+        _db("PATCH", params={"chiave": f"eq.{r['chiave']}"}, corpo={"esito": esito, "dettaglio": det})
+        r["esito"], r["dettaglio"] = esito, det
+        fatti += 1
+    return fatti
+
+
+def percentuale_barra(titolo, k, n, atteso=None):
+    perc = k / n * 100 if n else 0
+    extra = f' · previsto {atteso:.0%}' if atteso is not None else ""
+    return (f'<div class="card2" style="margin:0"><div class="s">{esc(titolo)}</div>'
+            f'<div style="font-size:17px;font-weight:600">{k}/{n} <span class="s">({perc:.0f}%{extra})</span></div>'
+            f'<div style="height:4px;background:#232836;border-radius:2px;margin-top:6px">'
+            f'<div style="width:{perc:.0f}%;height:4px;background:{VERDE if perc >= 60 else "#ff5d5d"};'
+            f'border-radius:2px"></div></div></div>')
+
+
 # ------------------------------------------------------------- NAVIGAZIONE
 per_id = {g["id"]: g for g in giocate}
 auto = consigli_automatici(proiezioni, gioc_df)
@@ -996,8 +1162,18 @@ miglior = {}
 for gi in giocate:
     miglior.setdefault(gi["partita"], gi)
 infop = {(g["casa"], g["trasf"]): g.to_dict() for _, g in partite.iterrows()}
+GIORNO = datetime.now(ZoneInfo("Europe/Rome")).strftime("%Y-%m-%d")
+registro_msg = None
+if db_conf():
+    try:
+        n_salvati = salva_consigli(auto, infop, GIORNO)
+        registro_msg = f"registro: {n_salvati} nuovi consigli salvati" if n_salvati else "registro: nulla di nuovo da salvare"
+    except Exception as e:
+        registro_msg = f"registro: ERRORE {type(e).__name__} {str(e)[:120]}"
+else:
+    registro_msg = "registro: non configurato (mancano i secrets Supabase)"
 
-VISTE = ["Combo", "Partite", "Studio partita", "Fine giornata"]
+VISTE = ["Combo", "Partite", "Studio partita", "Fine giornata", "Storico"]
 if st.session_state.get("vista") not in VISTE:
     st.session_state.vista = "Combo"
 
@@ -1161,6 +1337,61 @@ elif vista == "Fine giornata":
         st.caption("I consigli sono ricalcolati con le statistiche attuali, non salvati prima della partita. "
                    "Rimbalzi e assist reali arrivano dal tabellino di ESPN.")
 
+# ----------------------------------------------------------------- STORICO
+elif vista == "Storico":
+    if not db_conf():
+        st.info("Il registro non è ancora attivo: servono i secrets SUPABASE_URL e SUPABASE_KEY. "
+                "Segui la guida e poi riavvia l'app.")
+    else:
+        try:
+            righe = _db("GET", params={"select": "*", "order": "creato.desc", "limit": "3000"})
+            finite_s = pd.concat([ieri, partite[partite["stato"] == "post"]], ignore_index=True)
+            if not finite_s.empty and any(r.get("esito") is None for r in righe):
+                if aggiorna_esiti(righe, finite_s):
+                    st.caption("Esiti aggiornati con le partite finite.")
+        except Exception as e:
+            righe = []
+            st.error(f"Registro non raggiungibile: {type(e).__name__}. {str(e)[:160]}")
+        valide = [r for r in righe if r.get("esito") in (0, 1)]
+        in_attesa = sum(1 for r in righe if r.get("esito") is None)
+        if not valide:
+            st.info(f"Nessun esito ancora: {len(righe)} consigli salvati, {in_attesa} in attesa che le partite finiscano. "
+                    "Apri l'app ogni giorno: salva i consigli prima delle partite e li verifica dopo.")
+        else:
+            ok = sum(1 for r in valide if r["esito"] == 1)
+            pc = ok / len(valide) * 100
+            atteso = sum(r["prob"] for r in valide) / len(valide)
+            st.markdown(
+                f'<div class="card2" style="display:flex;align-items:center;gap:14px">'
+                f'{anello(pc, VERDE if pc >= 60 else ARANCIO, 76)}<div><div class="s">Storico dei consigli salvati</div>'
+                f'<div style="font-size:20px;font-weight:600">{ok} su {len(valide)} azzeccati</div>'
+                f'<div class="s">Il modello prevedeva in media il {atteso:.0%} · {in_attesa} in attesa</div></div></div>',
+                unsafe_allow_html=True)
+            st.markdown("### Per categoria")
+            celle = ""
+            for titolo, icona, tipi in SCATOLE:
+                v = [r for r in valide if r["tipo"] in tipi]
+                if v:
+                    celle += percentuale_barra(titolo, sum(1 for r in v if r["esito"] == 1), len(v),
+                                               sum(r["prob"] for r in v) / len(v))
+            st.markdown(f'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px">{celle}</div>',
+                        unsafe_allow_html=True)
+            st.markdown("### Calibrazione: la probabilità dichiarata è onesta?")
+            fasce = ((0.70, 0.75, "70-75%"), (0.75, 0.80, "75-80%"), (0.80, 0.85, "80-85%"), (0.85, 1.01, "85% e oltre"))
+            celle = ""
+            for lo, hi, nome in fasce:
+                v = [r for r in valide if lo <= r["prob"] < hi]
+                if v:
+                    celle += percentuale_barra(nome, sum(1 for r in v if r["esito"] == 1), len(v),
+                                               sum(r["prob"] for r in v) / len(v))
+            st.markdown(f'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px">{celle}</div>',
+                        unsafe_allow_html=True)
+            st.caption("Se in una fascia la percentuale reale è molto più bassa di quella prevista, il modello è troppo ottimista "
+                       "lì. Servono almeno qualche decina di giocate per fidarsi dei numeri.")
+            st.markdown("### Ultimi esiti")
+            st.markdown("".join(riga_esito(dict(r, dettaglio=r.get("dettaglio") or "")) for r in valide[:30]),
+                        unsafe_allow_html=True)
+
 # ----------------------------------------------------------- STUDIO PARTITA
 else:
     mappa = {etichetta(c, t): (c, t) for (c, t) in proiezioni}
@@ -1186,6 +1417,11 @@ else:
         f'di {abs(marg):.1f} punti</div></div>',
         unsafe_allow_html=True,
     )
+
+    st.markdown("### Ultimi incontri")
+    for sq in (casa, trasf):
+        with st.expander(f"{nome_squadra(sq)}: ultime 5 partite"):
+            blocco_ultime(sq)
 
     st.markdown("### Giocate consigliate")
     auto_partita = [x for x in auto if x["partita"] == etichetta(casa, trasf)]
@@ -1271,4 +1507,6 @@ with st.expander("Diagnostica dati"):
         st.write("• " + riga)
     for err in errori:
         st.write("• errore: " + err)
+    if registro_msg:
+        st.write("• " + registro_msg)
     st.write(f"Partite: {len(partite)} · Squadre: {len(teams)} · Giocatori: {len(players)}")
