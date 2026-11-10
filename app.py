@@ -113,14 +113,29 @@ h3 {{ font-size:1.05rem; margin-top:0.8rem; }}
 .card, .card2 {{ animation:sale .28s ease both; }}
 .chip {{ display:inline-block; padding:4px 10px; border-radius:999px; font-size:11px; background:#1d212c; color:#cfd4df; margin:0 5px 5px 0; }}
 .lgbox {{ display:flex; align-items:center; gap:10px; min-width:0; }}
-.st-key-navbar {{ position:fixed; bottom:0; left:0; right:0; z-index:999; background:#10131a; border-top:1px solid #232836;
-                  padding:8px 10px calc(8px + env(safe-area-inset-bottom)); }}
-.st-key-navbar [data-testid="stButtonGroup"] {{ width:100%; display:flex; justify-content:center; }}
-.st-key-navbar button {{ flex:1; font-size:11px !important; padding:8px 2px !important; border:0 !important;
-                          background:transparent !important; color:#8b93a5 !important; border-radius:12px !important; }}
-.st-key-navbar button[kind="segmented_controlActive"], .st-key-navbar button[aria-checked="true"],
-.st-key-navbar button[data-testid="stBaseButton-segmented_controlActive"] {{ background:#2a2f3d !important; color:{ARANCIO} !important; }}
-[data-testid="stMainBlockContainer"], .block-container {{ padding-bottom:96px !important; }}
+[data-testid="stHeader"], [data-testid="stToolbar"], #MainMenu, footer {{ display:none !important; }}
+[data-testid="stMainBlockContainer"], .block-container {{ padding-top:4.6rem !important; padding-bottom:2rem !important; }}
+.st-key-navbar {{ position:fixed; top:0; left:0; right:0; z-index:999; background:#10131a; border-bottom:1px solid #232836;
+                  padding:calc(8px + env(safe-area-inset-top)) 8px 8px; }}
+.st-key-navbar, .st-key-navbar > div, .st-key-navbar [data-testid="stElementContainer"],
+.st-key-navbar [data-testid="stButtonGroup"], .st-key-navbar [role="group"] {{ width:100% !important; max-width:100% !important; }}
+[data-testid="stButtonGroup"] {{ gap:6px !important; }}
+.st-key-navbar [data-testid="stButtonGroup"] {{ flex-wrap:nowrap !important; }}
+.st-key-navbar button {{ flex:1 1 0 !important; min-width:0 !important; font-size:11px !important; padding:6px 2px !important;
+                         white-space:nowrap !important; }}
+button[data-testid="stBaseButton-pills"], button[data-testid="stBaseButton-segmented_control"] {{
+    background:#14171f !important; border:1px solid #232836 !important; color:#cfd4df !important;
+    border-radius:999px !important; font-size:13px !important; }}
+button[data-testid="stBaseButton-pillsActive"], button[data-testid="stBaseButton-segmented_controlActive"] {{
+    background:{ARANCIO} !important; border:1px solid {ARANCIO} !important; color:#1a1206 !important;
+    border-radius:999px !important; font-size:13px !important; font-weight:600 !important; }}
+.st-key-navbar button[data-testid="stBaseButton-segmented_control"] {{ background:transparent !important; border:0 !important;
+    color:#8b93a5 !important; border-radius:12px !important; font-size:11px !important; }}
+.st-key-navbar button[data-testid="stBaseButton-segmented_controlActive"] {{ background:#2a2f3d !important; color:{ARANCIO} !important;
+    border:0 !important; border-radius:12px !important; font-size:11px !important; }}
+.st-key-giorni [data-testid="stButtonGroup"], .st-key-scelta_partita [data-testid="stButtonGroup"] {{
+    flex-wrap:nowrap !important; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }}
+.st-key-giorni button, .st-key-scelta_partita button {{ flex:0 0 auto !important; white-space:nowrap !important; }}
 button[role="tab"] {{ color:#f2f2f2; }}
 button[role="tab"][aria-selected="true"] {{ color:{ARANCIO}; }}
 </style>
@@ -693,7 +708,8 @@ GIORNI = {"Ieri": (_adesso_us - timedelta(days=1)).strftime("%Y%m%d"), "Oggi": N
           "Dopodomani": (_adesso_us + timedelta(days=2)).strftime("%Y%m%d")}
 if st.session_state.get("giorno_sel") not in GIORNI:
     st.session_state.giorno_sel = "Oggi"
-giorno_sel = st.segmented_control("Giorno", list(GIORNI), key="giorno_sel", label_visibility="collapsed") or "Oggi"
+with st.container(key="giorni"):
+    giorno_sel = st.segmented_control("Giorno", list(GIORNI), key="giorno_sel", label_visibility="collapsed") or "Oggi"
 partite, teams, players, linee_auto, diag, modo, errori, ieri, aggiornato = carica_tutto(GIORNI[giorno_sel])
 if modo == "DEMO":
     st.warning("Dati live non disponibili: " + " | ".join(errori) + ". Uso dati di esempio.")
@@ -1228,7 +1244,9 @@ def aggiorna():
     st.cache_data.clear()
 
 
-ETICHETTE_VISTE = {"Combo": "Combo", "Partite": "Partite", "Studio partita": "Studio", "Fine giornata": "Esiti", "Storico": "Storico"}
+ETICHETTE_VISTE = {"Combo": ":material/local_fire_department: Combo", "Partite": ":material/sports_basketball: Partite",
+                   "Studio partita": ":material/analytics: Studio", "Fine giornata": ":material/task_alt: Esiti",
+                   "Storico": ":material/history: Storico"}
 with st.container(key="navbar"):
     vista = st.segmented_control("Vista", VISTE, key="vista", format_func=lambda v: ETICHETTE_VISTE.get(v, v),
                                  label_visibility="collapsed") or "Combo"
@@ -1442,7 +1460,9 @@ else:
     opzioni = list(mappa)
     if st.session_state.get("partita") not in opzioni:
         st.session_state.partita = opzioni[0]
-    scelta = st.pills("Partita", opzioni, key="partita", label_visibility="collapsed") or opzioni[0]
+    with st.container(key="scelta_partita"):
+        scelta = st.pills("Partita", opzioni, key="partita", label_visibility="collapsed",
+                          format_func=lambda e: f"{mappa[e][1]} @ {mappa[e][0]}") or opzioni[0]
     casa, trasf = mappa[scelta]
     r = proiezioni[(casa, trasf)]
     d = gioc_df[(casa, trasf)]
@@ -1450,22 +1470,8 @@ else:
     fav = casa if marg > 0 else trasf
     quota_casa = r["pt_casa"] / (r["pt_casa"] + r["pt_trasf"]) * 100
 
-    st.markdown(
-        f'<div class="card2"><div class="riga" style="align-items:flex-end">'
-        f'<div><div class="s">{badge(casa)}{esc(nome_squadra(casa))} · casa</div><div class="grande">{r["pt_casa"]:.1f}</div></div>'
-        f'<div style="text-align:right"><div class="s">{esc(nome_squadra(trasf))}{badge(trasf).replace("margin-right:6px", "margin-left:6px")}</div>'
-        f'<div class="grande">{r["pt_trasf"]:.1f}</div></div></div>'
-        f'<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:10px">'
-        f'<div style="width:{quota_casa}%;background:{ARANCIO}"></div><div style="flex:1;background:#4a5060"></div></div>'
-        f'<div class="s" style="margin-top:6px">{esc(ore.get((casa, trasf), ""))} · Favorita {esc(nome_squadra(fav, True))} '
-        f'di {abs(marg):.1f} punti</div></div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("### Ultimi incontri")
-    for sq in (casa, trasf):
-        with st.expander(f"{nome_squadra(sq)}: ultime 5 partite"):
-            blocco_ultime(sq)
+    st.markdown(scheda_partita(casa, trasf, r, infop.get((casa, trasf), {}), miglior.get(etichetta(casa, trasf))),
+                unsafe_allow_html=True)
 
     st.markdown("### Giocate consigliate")
     auto_partita = [x for x in auto if x["partita"] == etichetta(casa, trasf)]
