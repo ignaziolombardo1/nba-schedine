@@ -360,7 +360,7 @@ def carica_statistiche_espn():
     teams = pd.DataFrame(righe_t).drop_duplicates("TEAM_ABBREVIATION").set_index("TEAM_ABBREVIATION")
     diag.append(f"squadre: {len(teams)}")
 
-    cols = ["PLAYER_NAME", "TEAM_ABBREVIATION", "MIN", "PTS_ST", "PTS_L10", "REB_ST", "REB_L10", "AST_ST", "AST_L10"]
+    cols = ["PLAYER_NAME", "PLAYER_ID", "TEAM_ABBREVIATION", "MIN", "PTS_ST", "PTS_L10", "REB_ST", "REB_L10", "AST_ST", "AST_L10"]
     righe_p = []
     try:
         oggi = datetime.now()
@@ -381,7 +381,7 @@ def carica_statistiche_espn():
             if ab and v.get("avgPoints") is not None and v.get("avgMinutes") is not None:
                 reb = float(v.get("avgRebounds") or 0.0)
                 ast = float(v.get("avgAssists") or 0.0)
-                righe_p.append({"PLAYER_NAME": info.get("displayName"), "TEAM_ABBREVIATION": ab,
+                righe_p.append({"PLAYER_NAME": info.get("displayName"), "PLAYER_ID": str(info.get("id", "")), "TEAM_ABBREVIATION": ab,
                                 "MIN": float(v["avgMinutes"]), "PTS_ST": float(v["avgPoints"]),
                                 "PTS_L10": float(v["avgPoints"]), "REB_ST": reb, "REB_L10": reb,
                                 "AST_ST": ast, "AST_L10": ast})
@@ -411,14 +411,34 @@ def carica_tutto():
     return _completa(p), t, pl, {}, [], "DEMO", errori, vuoto, datetime.now().strftime("%H:%M")
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def carica_infortuni():
+    """Infortuni segnalati da ESPN: {nome minuscolo: {'stato': 'out' | 'dubbio', 'dettaglio': ...}}."""
+    d = _get(f"{ESPN}/injuries")
+    out = {}
+    for t in d.get("injuries", []):
+        for i in t.get("injuries", []):
+            nome = i.get("athlete", {}).get("displayName")
+            stato = str(i.get("status", "")).lower()
+            if nome:
+                out[nome.strip().lower()] = {
+                    "stato": "out" if "out" in stato else "dubbio",
+                    "dettaglio": i.get("shortComment") or i.get("status") or "",
+                }
+    return out
+
+
 # ---------------------------------------------------------------- MODELLO
-def proietta_partita(casa, trasf, teams):
+B2B_PUNTI = 1.2  # punti in meno stimati per una squadra che ha giocato ieri
+
+
+def proietta_partita(casa, trasf, teams, b2b=()):
     lega_pace = teams["PACE"].mean()
     pace = (teams.loc[casa, "PACE"] + teams.loc[trasf, "PACE"]) / 2
     off_casa = (teams.loc[casa, "OFF_RATING"] + teams.loc[trasf, "DEF_RATING"]) / 2
     off_trasf = (teams.loc[trasf, "OFF_RATING"] + teams.loc[casa, "DEF_RATING"]) / 2
-    pt_casa = off_casa * pace / 100 + HOME_ADV / 2
-    pt_trasf = off_trasf * pace / 100 - HOME_ADV / 2
+    pt_casa = off_casa * pace / 100 + HOME_ADV / 2 - (B2B_PUNTI if casa in b2b else 0.0)
+    pt_trasf = off_trasf * pace / 100 - HOME_ADV / 2 - (B2B_PUNTI if trasf in b2b else 0.0)
     return {
         "pt_casa": pt_casa,
         "pt_trasf": pt_trasf,
@@ -428,7 +448,7 @@ def proietta_partita(casa, trasf, teams):
     }
 
 
-def proietta_giocatori(sigla, avversaria, fattore_pace, teams, players, esclusi):
+def proietta_giocatori(sigla, avversaria, fattore_pace, teams, players, esclusi, infortuni=None):
     lega_def = teams["DEF_RATING"].mean()
     f_dif = teams.loc[avversaria, "DEF_RATING"] / lega_def
     df = players[
@@ -436,6 +456,10 @@ def proietta_giocatori(sigla, avversaria, fattore_pace, teams, players, esclusi)
         & (players["MIN"] >= MIN_MINUTI)
         & (~players["PLAYER_NAME"].isin(esclusi))
     ].copy()
+    inf = infortuni or {}
+    df["inf"] = df["PLAYER_NAME"].str.strip().str.lower().map(lambda n: inf.get(n, {}).get("stato", ""))
+    df = df[df["inf"] != "out"].copy()
+    df["pid"] = df["PLAYER_ID"] if "PLAYER_ID" in df.columns else ""
 
     def mix(l10, st_):
         return PESO_FORMA * df[l10] + (1 - PESO_FORMA) * df[st_]
@@ -451,7 +475,7 @@ def proietta_giocatori(sigla, avversaria, fattore_pace, teams, players, esclusi)
     df["dif"] = f_dif
     df["squadra"] = sigla
     return df[["PLAYER_NAME", "squadra", "atteso", "reb", "ast", "forma", "stagione", "reb_st", "ast_st",
-               "minuti", "dif"]].rename(columns={"PLAYER_NAME": "giocatore"}).sort_values("atteso", ascending=False)
+               "minuti", "dif", "inf", "pid"]].rename(columns={"PLAYER_NAME": "giocatore"}).sort_values("atteso", ascending=False)
 
 
 def forza(z):
@@ -549,7 +573,7 @@ def consigli_automatici(proiezioni, gioc_df, n_top=3):
                     soglia = max(buoni)
                     pr = prob_over(val, soglia, sd)
                     out.append(dict(
-                        id=f"auto_{pref}{pl['giocatore']}", partita=part, tipo=mercato, squadra=sq,
+                        id=f"auto_{pref}{pl['giocatore']}", partita=part, tipo=mercato, squadra=sq, pid=pl["pid"],
                         testo=f"{pl['giocatore']} over {soglia:g} {unita}", stima=f"{val:.1f}", prob=pr,
                         motivo=(f"Stima {val:.1f} {unita} (media stagione {pl[col_st]:.1f}, {pl['minuti']:.0f} min). "
                                 f"Con la variabilità tipica, la probabilità di superare {soglia:g} è circa {pr:.0%}. "
@@ -659,19 +683,33 @@ if partite.empty:
     st.info("Nessuna partita in programma oggi.")
     st.stop()
 
-def prepara(df_partite):
+infortuni = {}
+if modo == "LIVE (ESPN)":
+    try:
+        infortuni = carica_infortuni()
+        diag.append(f"infortuni segnalati: {len(infortuni)}")
+    except Exception as e:
+        diag.append(f"infortuni: ERRORE {type(e).__name__}")
+b2b_oggi = set(ieri["casa"]) | set(ieri["trasf"]) if not ieri.empty else set()
+squadra_di = {}
+if not players.empty:
+    squadra_di = {str(n).strip().lower(): t for n, t in zip(players["PLAYER_NAME"], players["TEAM_ABBREVIATION"])}
+
+
+def prepara(df_partite, b2b=None, usa_infortuni=True):
     """Stime di squadra e di giocatori per ogni partita di un elenco."""
     prz, gd = {}, {}
     for _, g in df_partite.iterrows():
         casa, trasf = g["casa"], g["trasf"]
         if casa in teams.index and trasf in teams.index:
-            r = proietta_partita(casa, trasf, teams)
+            r = proietta_partita(casa, trasf, teams, b2b_oggi if b2b is None else b2b)
             prz[(casa, trasf)] = r
             fuori = st.session_state.esclusi
+            inf = infortuni if usa_infortuni else None
             gd[(casa, trasf)] = pd.concat(
                 [
-                    proietta_giocatori(casa, trasf, r["fattore_pace"], teams, players, fuori),
-                    proietta_giocatori(trasf, casa, r["fattore_pace"], teams, players, fuori),
+                    proietta_giocatori(casa, trasf, r["fattore_pace"], teams, players, fuori, inf),
+                    proietta_giocatori(trasf, casa, r["fattore_pace"], teams, players, fuori, inf),
                 ]
             )
     return prz, gd
@@ -706,6 +744,20 @@ def gauge(stima, linea):
     )
 
 
+def logo(ab, size=24):
+    url = f"https://a.espncdn.com/i/teamlogos/nba/500/{str(ab).lower()}.png"
+    return (f'<span style="display:inline-block;width:{size}px;height:{size}px;margin-right:6px;vertical-align:middle;'
+            f'background:url({url}) center/contain no-repeat"></span>')
+
+
+def foto(pid, size=38):
+    if not pid:
+        return ""
+    url = f"https://a.espncdn.com/i/headshots/nba/players/full/{pid}.png"
+    return (f'<span style="display:inline-block;width:{size}px;height:{size}px;border-radius:50%;margin-right:8px;'
+            f'flex-shrink:0;background:#232836 url({url}) center top/cover no-repeat"></span>')
+
+
 def anello(p, colore, size=52):
     """Anello di probabilità (SVG) con la percentuale al centro."""
     r = size / 2 - 5
@@ -725,8 +777,8 @@ def pillola(z):
 
 
 def intestazione(casa, trasf):
-    return (f'{badge(trasf)}<b>{esc(nome_squadra(trasf, True))}</b> <span class="s">@</span> '
-            f'{badge(casa)}<b>{esc(nome_squadra(casa, True))}</b>')
+    return (f'{logo(trasf, 20)}{badge(trasf)}<b>{esc(nome_squadra(trasf, True))}</b> <span class="s">@</span> '
+            f'{logo(casa, 20)}{badge(casa)}<b>{esc(nome_squadra(casa, True))}</b>')
 
 
 def scheda_partita(casa, trasf, r, info, miglior):
@@ -743,7 +795,7 @@ def scheda_partita(casa, trasf, r, info, miglior):
         vuoto = reale is None or pd.isna(reale)
         punti = "–" if vuoto else f"{int(reale)}"
         stima_txt = f'<span class="s">stima {stima:.1f}</span>' if stima is not None else ""
-        return (f'<div class="riga" style="padding:4px 0"><div>{badge(ab)}<b>{esc(nome_squadra(ab, True))}</b></div>'
+        return (f'<div class="riga" style="padding:4px 0"><div style="display:flex;align-items:center">{logo(ab, 26)}{badge(ab)}<b>{esc(nome_squadra(ab, True))}</b></div>'
                 f'<div style="display:flex;align-items:baseline;gap:10px">{stima_txt}'
                 f'<b style="font-size:22px;min-width:40px;text-align:right">{punti}</b></div></div>')
 
@@ -779,8 +831,9 @@ def scheda_giocatore(p, mercato, lp):
         return f'<div class="tile" style="{bordo}"><b>{valore:.1f}</b><span>{nome}</span></div>'
 
     nota = f"Stima {val:.1f} {unita}" + (f" · linea {lp:g}" if lp else "")
+    dubbio = '<span class="pill" style="color:#ffb066;margin-left:6px">Dubbio</span>' if p.get("inf") == "dubbio" else ""
     return (
-        f'<div class="card2"><div class="riga"><div>{badge(p["squadra"])}<b>{esc(p["giocatore"])}</b></div>'
+        f'<div class="card2"><div class="riga"><div style="display:flex;align-items:center">{foto(p.get("pid"))}{badge(p["squadra"])}<b>{esc(p["giocatore"])}</b>{dubbio}</div>'
         f'<span class="s">{p["minuti"]:.0f} min</span></div>'
         f'<div class="tre">{tile("Punti", p["atteso"], mercato == "Punti")}'
         f'{tile("Rimbalzi", p["reb"], mercato == "Rimbalzi")}{tile("Assist", p["ast"], mercato == "Assist")}</div>'
@@ -973,7 +1026,7 @@ def riga_scatola(x, ultima):
     sq = badge(x["squadra"]) if x.get("squadra") else ""
     return (
         f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:{0 if ultima else 12}px">'
-        f'{anello(x["prob"] * 100, col, 48)}<div style="min-width:0"><div style="font-weight:500">{esc(x["testo"])}</div>'
+        f'{anello(x["prob"] * 100, col, 48)}{foto(x.get("pid"), 34) if x.get("pid") else (logo(x["squadra"], 30) if x.get("squadra") else "")}<div style="min-width:0"><div style="font-weight:500">{esc(x["testo"])}</div>'
         f'<div class="s" style="margin-top:2px">{sq}{esc(x["partita"])}</div></div></div>'
     )
 
@@ -1012,18 +1065,30 @@ if vista == "Combo":
                "Le percentuali sono stime, non certezze.")
     if players.empty:
         st.info("Statistiche dei giocatori non disponibili con questa fonte: restano squadre e totali.")
-    for titolo, icona, lista in gruppi:
-        if not lista:
-            continue
-        st.markdown(scatola(titolo, icona, lista), unsafe_allow_html=True)
-        if len(lista) > 3:
-            with st.expander(f"Altre giocate: {titolo} ({len(lista) - 3})"):
-                for x in lista[3:]:
-                    card(f"{x['partita']} · {x['tipo']}", x["testo"], f"{x['prob']:.0%}", f"stima {x['stima']}", GRIGIO)
-    if not players.empty:
-        st.markdown("### I migliori della giornata")
-        st.markdown(blocco_migliori(pd.concat(gioc_df.values()), "<b>Tutte le partite di oggi</b>", n=5,
-                                    mostra_squadra=True), unsafe_allow_html=True)
+    essenziale = st.toggle("Vista essenziale (solo le giocate più forti)", key="essenziale")
+    if essenziale:
+        forti_a = [x for x in auto if x["prob"] >= 0.78][:15]
+        if not forti_a:
+            st.info("Nessuna giocata sopra il 78% per ora.")
+        for x in forti_a:
+            visual = foto(x.get("pid"), 28) if x.get("pid") else (logo(x["squadra"], 24) if x.get("squadra") else "")
+            st.markdown(
+                f'<div class="card2" style="display:flex;align-items:center;gap:8px;padding:8px 12px">{visual}'
+                f'<div style="flex:1;min-width:0"><b>{esc(x["testo"])}</b><div class="s">{esc(x["partita"])}</div></div>'
+                f'<b style="color:{VERDE}">{x["prob"]:.0%}</b></div>', unsafe_allow_html=True)
+    else:
+        for titolo, icona, lista in gruppi:
+            if not lista:
+                continue
+            st.markdown(scatola(titolo, icona, lista), unsafe_allow_html=True)
+            if len(lista) > 3:
+                with st.expander(f"Altre giocate: {titolo} ({len(lista) - 3})"):
+                    for x in lista[3:]:
+                        card(f"{x['partita']} · {x['tipo']}", x["testo"], f"{x['prob']:.0%}", f"stima {x['stima']}", GRIGIO)
+        if not players.empty:
+            st.markdown("### I migliori della giornata")
+            st.markdown(blocco_migliori(pd.concat(gioc_df.values()), "<b>Tutte le partite di oggi</b>", n=5,
+                                        mostra_squadra=True), unsafe_allow_html=True)
 
 # ----------------------------------------------------------------- PARTITE
 elif vista == "Partite":
@@ -1055,7 +1120,7 @@ elif vista == "Fine giornata":
     if finite.empty:
         st.info("Nessuna partita finita da verificare per ora. Torna a partite concluse.")
     else:
-        prz_f, gd_f = prepara(finite)
+        prz_f, gd_f = prepara(finite, b2b=set(), usa_infortuni=False)
         ris = verifica_giornata(finite, prz_f, gd_f)
         valide = [x for x in ris if x["esito"] != 2]
         ok = sum(1 for x in valide if x["esito"] == 1)
@@ -1131,7 +1196,7 @@ else:
         st.info("Statistiche dei giocatori non disponibili con questa fonte.")
     else:
         for sq in (casa, trasf):
-            st.markdown(blocco_migliori(d[d["squadra"] == sq], f"{badge(sq)}<b>{esc(nome_squadra(sq))}</b>"),
+            st.markdown(blocco_migliori(d[d["squadra"] == sq], f'<div style="display:flex;align-items:center">{logo(sq, 26)}{badge(sq)}<b>{esc(nome_squadra(sq))}</b></div>'),
                         unsafe_allow_html=True)
 
     st.markdown("### Totale e spread")
@@ -1158,6 +1223,14 @@ else:
     if players.empty:
         st.info("Statistiche dei giocatori non disponibili con questa fonte.")
     else:
+        rilevanti = set(players[(players["TEAM_ABBREVIATION"].isin([casa, trasf])) & (players["MIN"] >= MIN_MINUTI)]
+                        ["PLAYER_NAME"].str.strip().str.lower())
+        segnalati = [(n, v) for n, v in infortuni.items() if n in rilevanti and squadra_di.get(n) in (casa, trasf)]
+        if segnalati:
+            st.markdown("**Infortuni segnalati**")
+            for n, v in sorted(segnalati, key=lambda x: x[1]["stato"]):
+                et = "Out, escluso dai calcoli" if v["stato"] == "out" else "Dubbio, ancora incluso"
+                st.caption(f"{n.title()} ({nome_squadra(squadra_di[n], True)}): {et}. {v['dettaglio']}")
         rosa = players[(players["TEAM_ABBREVIATION"].isin([casa, trasf])) & (players["MIN"] >= MIN_MINUTI)]
         tutti = sorted(set(rosa["PLAYER_NAME"]) | set(st.session_state.esclusi))
         st.pills("Tocca i giocatori che sono out", tutti, selection_mode="multi", key="esclusi")
@@ -1175,9 +1248,9 @@ else:
                 st.caption(f"**Gioca: {gi['testo']}** ({forza(gi['z'])[0]}). {gi['motivo']}")
 
     st.markdown("### Da controllare prima di decidere")
-    note = ["Infortuni e formazioni: l'app non li legge ancora. Segna i giocatori out e controlla le "
-            "ultime notizie poco prima della partita.",
-            "Back-to-back e riposi: non sono considerati nel calcolo.",
+    note = ["Infortuni: l'app legge l'elenco di ESPN ed esclude chi è «out». Controlla comunque le ultime "
+            "notizie e le formazioni poco prima della partita.",
+            "Riposo: è considerato solo il back-to-back (squadra che ha giocato ieri, circa un punto in meno).",
             "Rimbalzi e assist: stima semplice basata sulla media e sul ritmo di gioco, meno precisa dei punti."]
     if "ESPN" in modo:
         note.append("Con la fonte ESPN la forma recente non è disponibile: le stime dei giocatori usano la media stagionale.")
@@ -1186,6 +1259,9 @@ else:
                     "con rischio per gli over sui giocatori.")
     if abs(marg) < 3:
         note.append("Partita molto equilibrata: lo spread è poco affidabile, conta di più il totale.")
+    for sq in (casa, trasf):
+        if sq in b2b_oggi:
+            note.append(f"{nome_squadra(sq, True)} ha giocato ieri: stima ridotta di circa {B2B_PUNTI:g} punti.")
     for n in note:
         st.markdown("• " + n)
 
