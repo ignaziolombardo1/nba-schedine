@@ -107,6 +107,20 @@ h3 {{ font-size:1.05rem; margin-top:0.8rem; }}
 .tile {{ background:#0b0d12; border-radius:10px; padding:6px; text-align:center; border:1px solid transparent; }}
 .tile b {{ font-size:18px; }}
 .tile span {{ display:block; font-size:11px; color:{GRIGIO}; }}
+.dot {{ display:inline-block; width:7px; height:7px; border-radius:50%; background:#ff4d4d; margin-right:6px; animation:lampeggia 1.2s infinite; }}
+@keyframes lampeggia {{ 0%,100% {{ opacity:1; }} 50% {{ opacity:.25; }} }}
+@keyframes sale {{ from {{ opacity:0; transform:translateY(8px); }} to {{ opacity:1; transform:none; }} }}
+.card, .card2 {{ animation:sale .28s ease both; }}
+.chip {{ display:inline-block; padding:4px 10px; border-radius:999px; font-size:11px; background:#1d212c; color:#cfd4df; margin:0 5px 5px 0; }}
+.lgbox {{ display:flex; align-items:center; gap:10px; min-width:0; }}
+.st-key-navbar {{ position:fixed; bottom:0; left:0; right:0; z-index:999; background:#10131a; border-top:1px solid #232836;
+                  padding:8px 10px calc(8px + env(safe-area-inset-bottom)); }}
+.st-key-navbar [data-testid="stButtonGroup"] {{ width:100%; display:flex; justify-content:center; }}
+.st-key-navbar button {{ flex:1; font-size:11px !important; padding:8px 2px !important; border:0 !important;
+                          background:transparent !important; color:#8b93a5 !important; border-radius:12px !important; }}
+.st-key-navbar button[kind="segmented_controlActive"], .st-key-navbar button[aria-checked="true"],
+.st-key-navbar button[data-testid="stBaseButton-segmented_controlActive"] {{ background:#2a2f3d !important; color:{ARANCIO} !important; }}
+[data-testid="stMainBlockContainer"], .block-container {{ padding-bottom:96px !important; }}
 button[role="tab"] {{ color:#f2f2f2; }}
 button[role="tab"][aria-selected="true"] {{ color:{ARANCIO}; }}
 </style>
@@ -793,38 +807,56 @@ def intestazione(casa, trasf):
 
 
 def scheda_partita(casa, trasf, r, info, miglior):
-    """Scheda partita con stato (finale/live/orario), punteggio reale e stima."""
+    """Scheda partita: stato, loghi, punteggio reale e stima, probabilità di vittoria, chip con i dati chiave."""
     stato = info.get("stato")
     if stato == "post":
         chip, col = "Finale", VERDE
     elif stato == "in":
-        chip, col = f"Live · {info.get('dettaglio', '')}", ARANCIO
+        chip, col = f'<span class="dot"></span>Live · {esc(info.get("dettaglio", ""))}', ARANCIO
     else:
-        chip, col = info.get("ora", ""), GRIGIO
+        chip, col = esc(info.get("ora", "")), GRIGIO
 
-    def riga(ab, stima, reale):
+    def riga(ab, ruolo, stima, reale):
         vuoto = reale is None or pd.isna(reale)
         punti = "–" if vuoto else f"{int(reale)}"
-        stima_txt = f'<span class="s">stima {stima:.1f}</span>' if stima is not None else ""
-        return (f'<div class="riga" style="padding:4px 0"><div style="display:flex;align-items:center">{logo(ab, 26)}{badge(ab)}<b>{esc(nome_squadra(ab, True))}</b></div>'
-                f'<div style="display:flex;align-items:baseline;gap:10px">{stima_txt}'
-                f'<b style="font-size:22px;min-width:40px;text-align:right">{punti}</b></div></div>')
+        stima_txt = f'<div class="s">stima {stima:.1f}</div>' if stima is not None else ""
+        return (f'<div class="riga" style="padding:5px 0"><div class="lgbox">{logo(ab, 38).replace("margin-right:6px", "margin-right:0")}'
+                f'<div><div style="font-weight:600;font-size:15px">{esc(nome_squadra(ab, True))}</div>'
+                f'<div class="s">{ruolo}</div></div></div>'
+                f'<div style="text-align:right"><div style="font-size:26px;font-weight:600;line-height:1.1">{punti}</div>{stima_txt}</div></div>')
 
     bordo = SQUADRE.get(casa, ("", "", "#4a5060"))[2]
-    h = (f'<div class="card2" style="border-left:3px solid {bordo}"><span class="pill" style="color:{col}">{esc(chip)}</span>'
-         f'<div style="height:6px"></div>')
-    h += riga(trasf, r["pt_trasf"] if r else None, info.get("pt_trasf_reale"))
-    h += riga(casa, r["pt_casa"] if r else None, info.get("pt_casa_reale"))
+    h = (f'<div class="card2" style="border-left:3px solid {bordo}"><div class="riga" style="margin-bottom:6px">'
+         f'<span class="pill" style="color:{col}">{chip}</span></div>')
+    h += riga(trasf, "trasferta", r["pt_trasf"] if r else None, info.get("pt_trasf_reale"))
+    h += riga(casa, "casa", r["pt_casa"] if r else None, info.get("pt_casa_reale"))
     pc, pt_ = info.get("pt_casa_reale"), info.get("pt_trasf_reale")
     if r and stato in ("post", "in") and pc is not None and pt_ is not None and not pd.isna(pc) and not pd.isna(pt_):
         h += f'<div class="s" style="margin-top:4px">Totale reale {int(pc) + int(pt_)} · stima {r["totale"]:.1f}</div>'
     if r:
+        marg = r["margine_casa"]
+        pw_casa = phi(marg / STD["Spread"])
+        c_casa = SQUADRE.get(casa, ("", "", ARANCIO))[2]
+        c_tr = SQUADRE.get(trasf, ("", "", "#4a5060"))[2]
+        if c_casa.lower() == c_tr.lower():
+            c_tr = "#4a5060"
+        h += (f'<div class="s" style="margin:10px 0 4px">Probabilità di vittoria</div>'
+              f'<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:#2a2f3a">'
+              f'<div style="width:{(1 - pw_casa) * 100:.0f}%;background:{c_tr}"></div>'
+              f'<div style="flex:1;background:{c_casa}"></div></div>'
+              f'<div class="riga s" style="margin-top:4px"><span>{esc(trasf)} {(1 - pw_casa):.0%}</span><span>{esc(casa)} {pw_casa:.0%}</span></div>')
+        fav = casa if marg > 0 else trasf
+        chips = f'<span class="chip">Totale {r["totale"]:.1f}</span>'
+        chips += f'<span class="chip">Spread {esc(nome_squadra(fav, True))} -{abs(marg):.1f}</span>'
+        if miglior:
+            chips += f'<span class="chip" style="color:{VERDE}">Top: {esc(miglior["testo"])}</span>'
+        for sq in (casa, trasf):
+            if sq in b2b_oggi:
+                chips += f'<span class="chip" style="color:#ffb066">{esc(nome_squadra(sq, True))} back-to-back</span>'
+        h += f'<div style="margin-top:10px">{chips}</div>'
         h += gauge(r["totale"], st.session_state.linee.get(f"tot_{casa}"))
         if miglior:
-            h += (f'<div class="riga" style="margin-top:8px"><span>Gioca: <b>{esc(miglior["testo"])}</b> '
-                  f'<span class="s">(stima {esc(miglior["stima"])})</span></span>{pillola(miglior["z"])}</div>')
-        else:
-            h += '<div class="s" style="margin-top:8px">Nessuna linea inserita</div>'
+            h += f'<div class="riga" style="margin-top:6px"><span class="s">Segnale sulla linea</span>{pillola(miglior["z"])}</div>'
     return h + "</div>"
 
 
@@ -866,9 +898,18 @@ def scheda_giocatore(p, mercato, lp):
 
     nota = f"Stima {val:.1f} {unita}" + (f" · linea {lp:g}" if lp else "")
     dubbio = '<span class="pill" style="color:#ffb066;margin-left:6px">Dubbio</span>' if p.get("inf") == "dubbio" else ""
+    forma_txt = ""
+    try:
+        if p["stagione"] and p["forma"] == p["forma"] and p["forma"] > p["stagione"] * 1.08:
+            forma_txt = f' · <span style="color:{VERDE}">in forma</span>'
+        elif p["stagione"] and p["forma"] == p["forma"] and p["forma"] < p["stagione"] * 0.92:
+            forma_txt = ' · <span style="color:#ff5d5d">in calo</span>'
+    except Exception:
+        pass
     return (
-        f'<div class="card2"><div class="riga"><div style="display:flex;align-items:center">{foto(p.get("pid"))}{badge(p["squadra"])}<b>{esc(p["giocatore"])}</b>{dubbio}</div>'
-        f'<span class="s">{p["minuti"]:.0f} min</span></div>'
+        f'<div class="card2"><div class="riga"><div class="lgbox">{foto(p.get("pid"), 48).replace("margin-right:8px", "margin-right:0")}'
+        f'<div style="min-width:0"><div style="font-weight:600;font-size:15px">{esc(p["giocatore"])}{dubbio}</div>'
+        f'<div class="s">{logo(p["squadra"], 16)}{esc(p["squadra"])} · {p["minuti"]:.0f} min{forma_txt}</div></div></div></div>'
         f'<div class="tre">{tile("Punti", p["atteso"], mercato == "Punti")}'
         f'{tile("Rimbalzi", p["reb"], mercato == "Rimbalzi")}{tile("Assist", p["ast"], mercato == "Assist")}</div>'
         f'<div style="position:relative;height:8px;background:#2a2f3a;border-radius:4px;margin:14px 0 6px">'
@@ -1187,7 +1228,10 @@ def aggiorna():
     st.cache_data.clear()
 
 
-vista = st.segmented_control("Vista", VISTE, key="vista", label_visibility="collapsed") or "Combo"
+ETICHETTE_VISTE = {"Combo": "Combo", "Partite": "Partite", "Studio partita": "Studio", "Fine giornata": "Esiti", "Storico": "Storico"}
+with st.container(key="navbar"):
+    vista = st.segmented_control("Vista", VISTE, key="vista", format_func=lambda v: ETICHETTE_VISTE.get(v, v),
+                                 label_visibility="collapsed") or "Combo"
 
 SCATOLE = [
     ("Squadre e totali", "ti-chart-bar", ("Vincente", "Squadra", "Totale")),
