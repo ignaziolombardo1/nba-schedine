@@ -81,24 +81,30 @@ ARANCIO, VERDE, GRIGIO = "#ff7a1a", "#3ddc84", "#9aa0aa"
 st.markdown(
     f"""
 <style>
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
 @import url("https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css");
-.stApp {{ background:#0f1115; color:#f2f2f2; }}
-h1,h2,h3 {{ color:{ARANCIO}; }}
-.card {{ background:#1b1f27; border-radius:12px; padding:12px 14px; margin-bottom:10px;
-         display:flex; justify-content:space-between; align-items:center; gap:10px; }}
+html, body, .stApp, [data-testid="stAppViewContainer"] {{ font-family:'Inter',-apple-system,sans-serif; }}
+.stApp {{ background:#0b0d12; color:#f2f2f2; }}
+h1,h2,h3 {{ color:#f2f2f2; font-weight:600; letter-spacing:-0.01em; }}
+h3 {{ font-size:1.05rem; margin-top:0.8rem; }}
+.testata {{ display:flex; align-items:center; gap:12px; margin-bottom:6px; }}
+.logo {{ width:40px; height:40px; border-radius:12px; background:{ARANCIO}; display:flex; align-items:center;
+         justify-content:center; font-size:22px; }}
+.nome {{ font-size:18px; font-weight:600; }}
+.card, .card2 {{ background:#14171f; border:1px solid #232836; border-radius:16px; padding:12px 14px; margin-bottom:8px; }}
+.card {{ display:flex; justify-content:space-between; align-items:center; gap:10px; }}
 .card .s {{ font-size:12px; color:{GRIGIO}; }}
-.card .t {{ font-size:16px; font-weight:600; }}
-.card .v {{ font-size:18px; font-weight:700; text-align:right; white-space:nowrap; }}
+.card .t {{ font-size:15px; font-weight:500; }}
+.card .v {{ font-size:18px; font-weight:600; text-align:right; white-space:nowrap; }}
 .card .e {{ font-size:11px; text-align:right; color:{GRIGIO}; }}
-.box {{ background:#2a2218; border-radius:12px; padding:12px 14px; margin:8px 0; }}
-.card2 {{ background:#1b1f27; border-radius:12px; padding:12px 14px; margin-bottom:6px; }}
+.box {{ background:#14171f; border:1px solid #232836; border-radius:16px; padding:12px 14px; margin:8px 0; }}
 .riga {{ display:flex; justify-content:space-between; align-items:center; gap:8px; }}
 .s {{ font-size:12px; color:{GRIGIO}; }}
 .grande {{ font-size:28px; font-weight:600; }}
-.pill {{ background:#0f1115; padding:3px 9px; border-radius:6px; font-size:11px; }}
-.badge {{ padding:2px 6px; border-radius:6px; font-size:11px; font-weight:700; margin-right:6px; }}
+.pill {{ background:#0b0d12; border:1px solid #232836; padding:3px 10px; border-radius:999px; font-size:11px; }}
+.badge {{ padding:2px 7px; border-radius:6px; font-size:11px; font-weight:600; margin-right:6px; }}
 .tre {{ display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:10px; }}
-.tile {{ background:#0f1115; border-radius:8px; padding:6px; text-align:center; border:1px solid transparent; }}
+.tile {{ background:#0b0d12; border-radius:10px; padding:6px; text-align:center; border:1px solid transparent; }}
 .tile b {{ font-size:18px; }}
 .tile span {{ display:block; font-size:11px; color:{GRIGIO}; }}
 button[role="tab"] {{ color:#f2f2f2; }}
@@ -252,7 +258,7 @@ def _entries(node):
             yield from _entries(v)
 
 
-EXTRA = ["stato", "dettaglio", "pt_casa_reale", "pt_trasf_reale"]
+EXTRA = ["id", "stato", "dettaglio", "pt_casa_reale", "pt_trasf_reale"]
 COLONNE_PARTITE = ["casa", "trasf", "ora"] + EXTRA
 
 
@@ -282,7 +288,7 @@ def _leggi_scoreboard(sb):
         stato = tipo.get("state")
         ora = pd.to_datetime(ev["date"], utc=True).tz_convert("Europe/Rome").strftime("%d/%m %H:%M")
         righe.append({
-            "casa": casa, "trasf": trasf, "ora": ora, "stato": stato, "dettaglio": tipo.get("shortDetail", ""),
+            "casa": casa, "trasf": trasf, "ora": ora, "id": ev.get("id"), "stato": stato, "dettaglio": tipo.get("shortDetail", ""),
             "pt_casa_reale": _punti(c_casa.get("score")) if stato != "pre" else None,
             "pt_trasf_reale": _punti(c_trasf.get("score")) if stato != "pre" else None,
         })
@@ -496,6 +502,7 @@ def consigli_automatici(proiezioni, gioc_df, n_top=3):
     out = []
     for (casa, trasf), r in proiezioni.items():
         part = etichetta(casa, trasf)
+        n0 = len(out)
         marg = r["margine_casa"]
         fav = casa if marg > 0 else trasf
         pw = phi(abs(marg) / STD["Spread"])
@@ -547,6 +554,8 @@ def consigli_automatici(proiezioni, gioc_df, n_top=3):
                         motivo=(f"Stima {val:.1f} {unita} (media stagione {pl[col_st]:.1f}, {pl['minuti']:.0f} min). "
                                 f"Con la variabilità tipica, la probabilità di superare {soglia:g} è circa {pr:.0%}. "
                                 f"Se il bookmaker offre una linea più bassa, c'è valore.")))
+        for x in out[n0:]:
+            x["gara"] = (casa, trasf)
     return sorted(out, key=lambda g: g["prob"], reverse=True)
 
 
@@ -633,7 +642,8 @@ def campo_linea(chiave, etichetta, minimo=0.0, segnaposto=None):
 
 
 # ------------------------------------------------------------------- DATI
-st.title("🏀 NBA Schedine")
+st.markdown('<div class="testata"><div class="logo">🏀</div><div><div class="nome">NBA Schedine</div>'
+            '<div class="s">Studio e consigli di giornata</div></div></div>', unsafe_allow_html=True)
 
 partite, teams, players, linee_auto, diag, modo, errori, ieri, aggiornato = carica_tutto()
 if modo == "DEMO":
@@ -649,20 +659,25 @@ if partite.empty:
     st.info("Nessuna partita in programma oggi.")
     st.stop()
 
-proiezioni, gioc_df = {}, {}
-for _, g in partite.iterrows():
-    casa, trasf = g["casa"], g["trasf"]
-    if casa in teams.index and trasf in teams.index:
-        r = proietta_partita(casa, trasf, teams)
-        proiezioni[(casa, trasf)] = r
-        fuori = st.session_state.esclusi
-        d = pd.concat(
-            [
-                proietta_giocatori(casa, trasf, r["fattore_pace"], teams, players, fuori),
-                proietta_giocatori(trasf, casa, r["fattore_pace"], teams, players, fuori),
-            ]
-        )
-        gioc_df[(casa, trasf)] = d
+def prepara(df_partite):
+    """Stime di squadra e di giocatori per ogni partita di un elenco."""
+    prz, gd = {}, {}
+    for _, g in df_partite.iterrows():
+        casa, trasf = g["casa"], g["trasf"]
+        if casa in teams.index and trasf in teams.index:
+            r = proietta_partita(casa, trasf, teams)
+            prz[(casa, trasf)] = r
+            fuori = st.session_state.esclusi
+            gd[(casa, trasf)] = pd.concat(
+                [
+                    proietta_giocatori(casa, trasf, r["fattore_pace"], teams, players, fuori),
+                    proietta_giocatori(trasf, casa, r["fattore_pace"], teams, players, fuori),
+                ]
+            )
+    return prz, gd
+
+
+proiezioni, gioc_df = prepara(partite)
 ore = {(g["casa"], g["trasf"]): g["ora"] for _, g in partite.iterrows()}
 
 giocate = giocate_da_linee(proiezioni, gioc_df, st.session_state.linee)
@@ -689,6 +704,19 @@ def gauge(stima, linea):
         f'<div style="position:absolute;left:calc({p(stima)}% - 6px);top:-1px;width:12px;height:12px;'
         f'border-radius:50%;background:{ARANCIO}"></div></div><div class="s">{testo}</div>'
     )
+
+
+def anello(p, colore, size=52):
+    """Anello di probabilità (SVG) con la percentuale al centro."""
+    r = size / 2 - 5
+    L = 2 * math.pi * r
+    c = size / 2
+    return (f'<svg width="{size}" height="{size}" viewBox="0 0 {size} {size}" style="flex-shrink:0">'
+            f'<circle cx="{c}" cy="{c}" r="{r}" fill="none" stroke="#232836" stroke-width="6"></circle>'
+            f'<circle cx="{c}" cy="{c}" r="{r}" fill="none" stroke="{colore}" stroke-width="6" stroke-linecap="round" '
+            f'stroke-dasharray="{L * p / 100:.1f} {L:.1f}" transform="rotate(-90 {c} {c})"></circle>'
+            f'<text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" fill="#f2f2f2" '
+            f'font-size="{18 if size > 60 else 13}" font-weight="600">{p:.0f}%</text></svg>')
 
 
 def pillola(z):
@@ -719,7 +747,9 @@ def scheda_partita(casa, trasf, r, info, miglior):
                 f'<div style="display:flex;align-items:baseline;gap:10px">{stima_txt}'
                 f'<b style="font-size:22px;min-width:40px;text-align:right">{punti}</b></div></div>')
 
-    h = f'<div class="card2"><span class="pill" style="color:{col}">{esc(chip)}</span><div style="height:6px"></div>'
+    bordo = SQUADRE.get(casa, ("", "", "#4a5060"))[2]
+    h = (f'<div class="card2" style="border-left:3px solid {bordo}"><span class="pill" style="color:{col}">{esc(chip)}</span>'
+         f'<div style="height:6px"></div>')
     h += riga(trasf, r["pt_trasf"] if r else None, info.get("pt_trasf_reale"))
     h += riga(casa, r["pt_casa"] if r else None, info.get("pt_casa_reale"))
     pc, pt_ = info.get("pt_casa_reale"), info.get("pt_trasf_reale")
@@ -811,6 +841,101 @@ def elenco_consigli(giocate):
                 st.caption(gi["motivo"])
 
 
+# ---------------------------------------------------------------- VERIFICA
+STAT_MERCATO = {"Punti": "PTS", "Rimbalzi": "REB", "Assist": "AST"}
+
+
+@st.cache_data(ttl=600, show_spinner="Scarico i tabellini...")
+def carica_boxscore(event_id):
+    """Statistiche reali dei giocatori di una partita finita: {nome minuscolo: {PTS, REB, AST}}."""
+    d = _get(f"{ESPN}/summary", {"event": event_id})
+    out = {}
+    for team in d.get("boxscore", {}).get("players", []):
+        for blocco in team.get("statistics", []):
+            labels = blocco.get("labels") or blocco.get("names") or []
+            idx = {str(l).upper(): i for i, l in enumerate(labels)}
+            for a in blocco.get("athletes", []):
+                nome = a.get("athlete", {}).get("displayName")
+                stats = a.get("stats", [])
+                if not nome or not stats:
+                    continue
+
+                def val(k):
+                    i = idx.get(k)
+                    try:
+                        return float(stats[i]) if i is not None else None
+                    except Exception:
+                        return None
+
+                out[nome.strip().lower()] = {"PTS": val("PTS"), "REB": val("REB"), "AST": val("AST")}
+    return out
+
+
+def valuta_giocata(x, g, box):
+    """Confronta una giocata con il risultato reale. Ritorna (esito, dettaglio): 1 azzeccata, 0 sbagliata, 2 non valida."""
+    pc, pt = g.get("pt_casa_reale"), g.get("pt_trasf_reale")
+    if pc is None or pt is None or pd.isna(pc) or pd.isna(pt):
+        return 2, "punteggio non disponibile"
+    pc, pt = int(pc), int(pt)
+    tipo, testo = x["tipo"], x["testo"]
+    if tipo == "Vincente":
+        vincente = g["casa"] if pc > pt else g["trasf"]
+        return (1 if vincente == x["squadra"] else 0), f"finale {pt}-{pc}"
+    m = re.search(r"(over|under) (\d+(?:\.\d+)?)", testo)
+    if not m:
+        return 2, "giocata non valutabile"
+    lato, soglia = m.group(1), float(m.group(2))
+    if tipo == "Squadra":
+        val = pc if x["squadra"] == g["casa"] else pt
+    elif tipo == "Totale":
+        val = pc + pt
+    elif tipo in STAT_MERCATO:
+        if box is None:
+            return 2, "tabellino non disponibile"
+        nome = testo.split(" over")[0].strip().lower()
+        val = box.get(nome, {}).get(STAT_MERCATO[tipo])
+        if val is None:
+            return 2, "non ha giocato"
+    else:
+        return 2, "giocata non valutabile"
+    ok = val > soglia if lato == "over" else val < soglia
+    return (1 if ok else 0), f"fatto {val:g}"
+
+
+def verifica_giornata(finite, prz, gd):
+    """Ricalcola i consigli per le partite finite e li confronta con i risultati reali."""
+    righe = {(g["casa"], g["trasf"]): g for g in finite.to_dict("records")}
+    box_cache, risultati = {}, []
+    for x in consigli_automatici(prz, gd):
+        g = righe.get(x.get("gara"))
+        if g is None:
+            continue
+        box = None
+        if x["tipo"] in STAT_MERCATO:
+            k = x["gara"]
+            if k not in box_cache:
+                try:
+                    box_cache[k] = carica_boxscore(g.get("id"))
+                except Exception:
+                    box_cache[k] = None
+            box = box_cache[k]
+        esito, det = valuta_giocata(x, g, box)
+        risultati.append(dict(x, esito=esito, dettaglio=det))
+    return risultati
+
+
+def riga_esito(r):
+    simbolo, col = {1: ("✓", VERDE), 0: ("✗", "#ff5d5d"), 2: ("–", GRIGIO)}[r["esito"]]
+    return (
+        f'<div class="card2" style="display:flex;align-items:center;gap:10px;padding:10px 12px">'
+        f'<div style="width:28px;height:28px;border-radius:50%;background:{col}22;color:{col};display:flex;'
+        f'align-items:center;justify-content:center;flex-shrink:0;font-weight:700">{simbolo}</div>'
+        f'<div style="min-width:0;flex:1"><div style="font-weight:500">{esc(r["testo"])}</div>'
+        f'<div class="s">{esc(r["partita"])} · {esc(r["dettaglio"])}</div></div>'
+        f'<div class="s">{r["prob"]:.0%}</div></div>'
+    )
+
+
 # ------------------------------------------------------------- NAVIGAZIONE
 per_id = {g["id"]: g for g in giocate}
 auto = consigli_automatici(proiezioni, gioc_df)
@@ -819,7 +944,7 @@ for gi in giocate:
     miglior.setdefault(gi["partita"], gi)
 infop = {(g["casa"], g["trasf"]): g.to_dict() for _, g in partite.iterrows()}
 
-VISTE = ["Combo", "Partite", "Studio partita"]
+VISTE = ["Combo", "Partite", "Studio partita", "Fine giornata"]
 if st.session_state.get("vista") not in VISTE:
     st.session_state.vista = "Combo"
 
@@ -847,11 +972,9 @@ def riga_scatola(x, ultima):
     col = VERDE if x["prob"] >= 0.80 else ARANCIO
     sq = badge(x["squadra"]) if x.get("squadra") else ""
     return (
-        f'<div style="margin-bottom:{0 if ultima else 12}px"><div class="riga"><span>{esc(x["testo"])}</span>'
-        f'<b style="color:{col}">{x["prob"]:.0%}</b></div>'
-        f'<div style="height:6px;background:#2a2f3a;border-radius:3px;margin-top:5px">'
-        f'<div style="width:{x["prob"] * 100:.0f}%;height:6px;background:{col};border-radius:3px"></div></div>'
-        f'<div class="s" style="margin-top:4px">{sq}{esc(x["partita"])}</div></div>'
+        f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:{0 if ultima else 12}px">'
+        f'{anello(x["prob"] * 100, col, 48)}<div style="min-width:0"><div style="font-weight:500">{esc(x["testo"])}</div>'
+        f'<div class="s" style="margin-top:2px">{sq}{esc(x["partita"])}</div></div></div>'
     )
 
 
@@ -879,9 +1002,10 @@ if vista == "Combo":
         for x in scelte:
             combinata *= x["prob"]
         st.markdown(
-            f'<div class="box"><div class="s" style="color:#ffb066">I primi di ogni riquadro, tutti insieme</div>'
-            f'<div style="font-size:24px;font-weight:600">circa {combinata:.0%}</div>'
-            f'<div class="s">Stima che assume eventi indipendenti: più giocate metti insieme, più è difficile vincerle tutte.</div></div>',
+            f'<div class="card2" style="display:flex;align-items:center;gap:14px">{anello(combinata * 100, ARANCIO, 76)}'
+            f'<div><div class="s">I primi di ogni riquadro, insieme</div>'
+            f'<div style="font-weight:500;font-size:15px">Meglio non esagerare</div>'
+            f'<div class="s">Stima con eventi indipendenti: più giocate unisci, meno è probabile.</div></div></div>',
             unsafe_allow_html=True,
         )
     st.caption("Per ogni giocata l'app trova la soglia che si supera con probabilità di almeno il 70% secondo il modello. "
@@ -924,6 +1048,53 @@ elif vista == "Partite":
         elenco_consigli(giocate)
     else:
         st.info("Nessuna linea inserita: apri «Studio partita» per aggiungerle e ottenere il confronto.")
+
+# ------------------------------------------------------------ FINE GIORNATA
+elif vista == "Fine giornata":
+    finite = pd.concat([ieri, partite[partite["stato"] == "post"]], ignore_index=True)
+    if finite.empty:
+        st.info("Nessuna partita finita da verificare per ora. Torna a partite concluse.")
+    else:
+        prz_f, gd_f = prepara(finite)
+        ris = verifica_giornata(finite, prz_f, gd_f)
+        valide = [x for x in ris if x["esito"] != 2]
+        ok = sum(1 for x in valide if x["esito"] == 1)
+        if valide:
+            pc = ok / len(valide) * 100
+            st.markdown(
+                f'<div class="card2" style="display:flex;align-items:center;gap:14px">'
+                f'{anello(pc, VERDE if pc >= 60 else ARANCIO, 76)}<div><div class="s">Consigli delle partite finite</div>'
+                f'<div style="font-size:20px;font-weight:600">{ok} su {len(valide)} azzeccati</div>'
+                f'<div class="s">{len(ris) - len(valide)} non validi (giocatore fermo o dato mancante)</div></div></div>',
+                unsafe_allow_html=True,
+            )
+            celle = ""
+            for titolo, icona, tipi in SCATOLE:
+                v = [x for x in valide if x["tipo"] in tipi]
+                if not v:
+                    continue
+                k = sum(1 for x in v if x["esito"] == 1)
+                perc = k / len(v) * 100
+                celle += (f'<div class="card2" style="margin:0"><div class="s">{esc(titolo)}</div>'
+                          f'<div style="font-size:17px;font-weight:600">{k}/{len(v)}</div>'
+                          f'<div style="height:4px;background:#232836;border-radius:2px;margin-top:6px">'
+                          f'<div style="width:{perc:.0f}%;height:4px;background:{VERDE if perc >= 60 else "#ff5d5d"};'
+                          f'border-radius:2px"></div></div></div>')
+            st.markdown(f'<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px">{celle}</div>',
+                        unsafe_allow_html=True)
+            for titolo, codice in (("Azzeccati", 1), ("Sbagliati", 0)):
+                lista = [x for x in valide if x["esito"] == codice]
+                if lista:
+                    st.markdown(f"### {titolo} ({len(lista)})")
+                    st.markdown("".join(riga_esito(x) for x in lista), unsafe_allow_html=True)
+            nulli = [x for x in ris if x["esito"] == 2]
+            if nulli:
+                with st.expander(f"Non validi ({len(nulli)})"):
+                    st.markdown("".join(riga_esito(x) for x in nulli), unsafe_allow_html=True)
+        else:
+            st.info("Nessuna giocata valutabile per le partite finite.")
+        st.caption("I consigli sono ricalcolati con le statistiche attuali, non salvati prima della partita. "
+                   "Rimbalzi e assist reali arrivano dal tabellino di ESPN.")
 
 # ----------------------------------------------------------- STUDIO PARTITA
 else:
