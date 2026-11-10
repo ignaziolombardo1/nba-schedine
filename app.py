@@ -9,7 +9,8 @@ import html
 import math
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -72,7 +73,7 @@ HOME_ADV = 1.5      # vantaggio casa in punti (metà a testa)
 MIN_MINUTI = 20     # giocatori con meno minuti medi vengono ignorati
 PESO_FORMA = 0.6    # peso delle ultime 10 partite rispetto alla stagione
 # Deviazioni tipiche (punti) per confrontare giocate di tipo diverso
-STD = {"Totale": 17.0, "Spread": 12.0, "Giocatore": 6.0}
+STD = {"Totale": 17.0, "Spread": 12.0, "Giocatore": 6.0, "Squadra": 12.0}
 
 ARANCIO, VERDE, GRIGIO = "#ff7a1a", "#3ddc84", "#9aa0aa"
 
@@ -80,6 +81,7 @@ ARANCIO, VERDE, GRIGIO = "#ff7a1a", "#3ddc84", "#9aa0aa"
 st.markdown(
     f"""
 <style>
+@import url("https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css");
 .stApp {{ background:#0f1115; color:#f2f2f2; }}
 h1,h2,h3 {{ color:{ARANCIO}; }}
 .card {{ background:#1b1f27; border-radius:12px; padding:12px 14px; margin-bottom:10px;
@@ -250,25 +252,40 @@ def _entries(node):
             yield from _entries(v)
 
 
-@st.cache_data(ttl=1800, show_spinner="Scarico i dati NBA (ESPN)...")
-def carica_espn():
-    diag = []
-    # 1) partite di oggi + linee dei bookmaker (se ESPN le fornisce)
+EXTRA = ["stato", "dettaglio", "pt_casa_reale", "pt_trasf_reale"]
+COLONNE_PARTITE = ["casa", "trasf", "ora"] + EXTRA
+
+
+def _completa(df):
+    for c in COLONNE_PARTITE:
+        if c not in df.columns:
+            df[c] = None
+    return df[COLONNE_PARTITE]
+
+
+def _punti(x):
     try:
-        sb = _get(f"{ESPN}/scoreboard")
-    except Exception as e:
-        raise RuntimeError(f"ESPN partite: {type(e).__name__}")
+        return int(float(x))
+    except Exception:
+        return None
+
+
+def _leggi_scoreboard(sb):
+    """Da JSON ESPN a (righe partite, linee bookmaker)."""
     righe, linee = [], {}
     for ev in sb.get("events", []):
         comp = ev["competitions"][0]
-        casa = next(c for c in comp["competitors"] if c["homeAway"] == "home")["team"]["abbreviation"]
-        trasf = next(c for c in comp["competitors"] if c["homeAway"] == "away")["team"]["abbreviation"]
-        stato = ev.get("status", {}).get("type", {})
-        if stato.get("state") == "pre":
-            ora = pd.to_datetime(ev["date"], utc=True).tz_convert("Europe/Rome").strftime("%d/%m %H:%M")
-        else:
-            ora = stato.get("shortDetail", "")
-        righe.append({"casa": casa, "trasf": trasf, "ora": ora})
+        c_casa = next(c for c in comp["competitors"] if c["homeAway"] == "home")
+        c_trasf = next(c for c in comp["competitors"] if c["homeAway"] == "away")
+        casa, trasf = c_casa["team"]["abbreviation"], c_trasf["team"]["abbreviation"]
+        tipo = ev.get("status", {}).get("type", {})
+        stato = tipo.get("state")
+        ora = pd.to_datetime(ev["date"], utc=True).tz_convert("Europe/Rome").strftime("%d/%m %H:%M")
+        righe.append({
+            "casa": casa, "trasf": trasf, "ora": ora, "stato": stato, "dettaglio": tipo.get("shortDetail", ""),
+            "pt_casa_reale": _punti(c_casa.get("score")) if stato != "pre" else None,
+            "pt_trasf_reale": _punti(c_trasf.get("score")) if stato != "pre" else None,
+        })
         for o in comp.get("odds", [])[:1]:
             if o.get("overUnder"):
                 linee[f"tot_{casa}"] = float(o["overUnder"])
@@ -276,10 +293,40 @@ def carica_espn():
             if m:
                 n = float(m.group(2))
                 linee[f"spr_{casa}"] = n if m.group(1) == casa else -n
-    partite = pd.DataFrame(righe, columns=["casa", "trasf", "ora"])
-    diag.append(f"partite: {len(partite)}, linee trovate: {len(linee)}")
+    return righe, linee
 
-    # 2) punti fatti e subiti per squadra
+
+@st.cache_data(ttl=120, show_spinner="Aggiorno partite e punteggi...")
+def carica_partite_espn():
+    """Partite di oggi (con punteggi live/finali e linee) e risultati di ieri. Cache breve: 2 minuti."""
+    try:
+        sb = _get(f"{ESPN}/scoreboard")
+    except Exception as e:
+        raise RuntimeError(f"ESPN partite: {type(e).__name__}")
+    righe, linee = _leggi_scoreboard(sb)
+    partite = _completa(pd.DataFrame(righe, columns=COLONNE_PARTITE))
+    ieri = _completa(pd.DataFrame(columns=COLONNE_PARTITE))
+    try:
+        try:
+            ora_us = datetime.now(ZoneInfo("America/New_York"))
+        except Exception:
+            ora_us = datetime.utcnow() - timedelta(hours=5)
+        giorno = (ora_us - timedelta(days=1)).strftime("%Y%m%d")
+        righe_ieri, _ = _leggi_scoreboard(_get(f"{ESPN}/scoreboard", {"dates": giorno}))
+        ieri = _completa(pd.DataFrame([x for x in righe_ieri if x["stato"] == "post"], columns=COLONNE_PARTITE))
+    except Exception:
+        pass
+    try:
+        aggiornato = datetime.now(ZoneInfo("Europe/Rome")).strftime("%H:%M")
+    except Exception:
+        aggiornato = datetime.now().strftime("%H:%M")
+    return partite, linee, ieri, aggiornato
+
+
+@st.cache_data(ttl=1800, show_spinner="Scarico le statistiche NBA (ESPN)...")
+def carica_statistiche_espn():
+    """Statistiche di squadre e giocatori. Cache di 30 minuti."""
+    diag = []
     try:
         cl = _get(f"{ESPN_V2}/standings")
     except Exception as e:
@@ -307,7 +354,6 @@ def carica_espn():
     teams = pd.DataFrame(righe_t).drop_duplicates("TEAM_ABBREVIATION").set_index("TEAM_ABBREVIATION")
     diag.append(f"squadre: {len(teams)}")
 
-    # 3) punti e minuti dei giocatori (sperimentale: se fallisce, restano squadre e totale)
     cols = ["PLAYER_NAME", "TEAM_ABBREVIATION", "MIN", "PTS_ST", "PTS_L10", "REB_ST", "REB_L10", "AST_ST", "AST_L10"]
     righe_p = []
     try:
@@ -336,25 +382,27 @@ def carica_espn():
         diag.append(f"giocatori: {len(righe_p)} (su {len(pj.get('athletes', []))} ricevuti)")
     except Exception as e:
         diag.append(f"giocatori: ERRORE {type(e).__name__}")
-    players = pd.DataFrame(righe_p, columns=cols)
-    return partite, teams, players, linee, diag
+    return teams, pd.DataFrame(righe_p, columns=cols), diag
 
 
 def carica_tutto():
     """Prova ESPN, poi nba_api, poi dati di esempio."""
     errori = []
     try:
-        p, t, pl, linee, diag = carica_espn()
-        return p, t, pl, linee, diag, "LIVE (ESPN)", errori
+        partite, linee, ieri, agg = carica_partite_espn()
+        teams, players, diag_s = carica_statistiche_espn()
+        diag = [f"partite oggi: {len(partite)}, linee trovate: {len(linee)}, risultati di ieri: {len(ieri)}"] + diag_s
+        return partite, teams, players, linee, diag, "LIVE (ESPN)", errori, ieri, agg
     except Exception as e:
         errori.append(str(e)[:200])
+    vuoto = _completa(pd.DataFrame(columns=COLONNE_PARTITE))
     try:
         p, t, pl = carica_dati_live()
-        return p, t, pl, {}, [], "LIVE (nba_api)", errori
+        return _completa(p), t, pl, {}, [], "LIVE (nba_api)", errori, vuoto, datetime.now().strftime("%H:%M")
     except Exception as e:
         errori.append(f"nba_api: {type(e).__name__}")
     p, t, pl = dati_demo()
-    return p, t, pl, {}, [], "DEMO", errori
+    return _completa(p), t, pl, {}, [], "DEMO", errori, vuoto, datetime.now().strftime("%H:%M")
 
 
 # ---------------------------------------------------------------- MODELLO
@@ -452,16 +500,34 @@ def consigli_automatici(proiezioni, gioc_df, n_top=3):
         fav = casa if marg > 0 else trasf
         pw = phi(abs(marg) / STD["Spread"])
         if pw >= 0.60:
-            out.append(dict(id=f"auto_win_{casa}", partita=part, tipo="Vincente",
+            out.append(dict(id=f"auto_win_{casa}", partita=part, tipo="Vincente", squadra=fav,
                             testo=f"{nome_squadra(fav, True)} vince", stima=f"+{abs(marg):.1f}", prob=pw,
                             motivo=(f"Margine stimato di {abs(marg):.1f} punti a favore di {nome_squadra(fav, True)}: "
                                     f"probabilità di vittoria circa {pw:.0%}.")))
-        lo = int(r["totale"] - 1.2816 * STD["Totale"])
-        hi = int(r["totale"] + 1.2816 * STD["Totale"]) + 1
-        out.append(dict(id=f"auto_tot_{casa}", partita=part, tipo="Totale",
-                        testo=f"Totale tra {lo} e {hi} punti", stima=f"{r['totale']:.1f}", prob=0.80,
-                        motivo=(f"Stima {r['totale']:.1f} punti totali: con la variabilità tipica di una partita NBA "
-                                f"il risultato cade in questo intervallo 8 volte su 10. Confrontalo con la linea del bookmaker.")))
+        for sq, pt in ((casa, r["pt_casa"]), (trasf, r["pt_trasf"])):
+            buoni = [x for x in (84.5 + 2 * i for i in range(26)) if 1 - phi((x - pt) / STD["Squadra"]) >= PROB_MIN]
+            if buoni:
+                x = max(buoni)
+                pr = 1 - phi((x - pt) / STD["Squadra"])
+                out.append(dict(id=f"auto_sq_{sq}", partita=part, tipo="Squadra", squadra=sq,
+                                testo=f"{nome_squadra(sq, True)} over {x:g} punti", stima=f"{pt:.1f}", prob=pr,
+                                motivo=(f"Stima {pt:.1f} punti per {nome_squadra(sq, True)}: la probabilità di superare "
+                                        f"{x:g} è circa {pr:.0%}.")))
+        scal_tot = [190.5 + 2 * i for i in range(36)]
+        ov = [x for x in scal_tot if 1 - phi((x - r["totale"]) / STD["Totale"]) >= PROB_MIN]
+        if ov:
+            x = max(ov)
+            pr = 1 - phi((x - r["totale"]) / STD["Totale"])
+            out.append(dict(id=f"auto_tov_{casa}", partita=part, tipo="Totale", squadra=None,
+                            testo=f"Totale over {x:g}", stima=f"{r['totale']:.1f}", prob=pr,
+                            motivo=f"Stima {r['totale']:.1f} punti totali: probabilità di superare {x:g} circa {pr:.0%}."))
+        un = [x for x in scal_tot if phi((x - r["totale"]) / STD["Totale"]) >= PROB_MIN]
+        if un:
+            x = min(un)
+            pr = phi((x - r["totale"]) / STD["Totale"])
+            out.append(dict(id=f"auto_tun_{casa}", partita=part, tipo="Totale", squadra=None,
+                            testo=f"Totale under {x:g}", stima=f"{r['totale']:.1f}", prob=pr,
+                            motivo=f"Stima {r['totale']:.1f} punti totali: probabilità di restare sotto {x:g} circa {pr:.0%}."))
         df = gioc_df[(casa, trasf)]
         for sq in (casa, trasf):
             ds = df[df["squadra"] == sq]
@@ -476,7 +542,7 @@ def consigli_automatici(proiezioni, gioc_df, n_top=3):
                     soglia = max(buoni)
                     pr = prob_over(val, soglia, sd)
                     out.append(dict(
-                        id=f"auto_{pref}{pl['giocatore']}", partita=part, tipo=mercato,
+                        id=f"auto_{pref}{pl['giocatore']}", partita=part, tipo=mercato, squadra=sq,
                         testo=f"{pl['giocatore']} over {soglia:g} {unita}", stima=f"{val:.1f}", prob=pr,
                         motivo=(f"Stima {val:.1f} {unita} (media stagione {pl[col_st]:.1f}, {pl['minuti']:.0f} min). "
                                 f"Con la variabilità tipica, la probabilità di superare {soglia:g} è circa {pr:.0%}. "
@@ -569,7 +635,7 @@ def campo_linea(chiave, etichetta, minimo=0.0, segnaposto=None):
 # ------------------------------------------------------------------- DATI
 st.title("🏀 NBA Schedine")
 
-partite, teams, players, linee_auto, diag, modo, errori = carica_tutto()
+partite, teams, players, linee_auto, diag, modo, errori, ieri, aggiornato = carica_tutto()
 if modo == "DEMO":
     st.warning("Dati live non disponibili: " + " | ".join(errori) + ". Uso dati di esempio.")
 for k, v in linee_auto.items():
@@ -589,11 +655,11 @@ for _, g in partite.iterrows():
     if casa in teams.index and trasf in teams.index:
         r = proietta_partita(casa, trasf, teams)
         proiezioni[(casa, trasf)] = r
-        esc = st.session_state.esclusi
+        fuori = st.session_state.esclusi
         d = pd.concat(
             [
-                proietta_giocatori(casa, trasf, r["fattore_pace"], teams, players, esc),
-                proietta_giocatori(trasf, casa, r["fattore_pace"], teams, players, esc),
+                proietta_giocatori(casa, trasf, r["fattore_pace"], teams, players, fuori),
+                proietta_giocatori(trasf, casa, r["fattore_pace"], teams, players, fuori),
             ]
         )
         gioc_df[(casa, trasf)] = d
@@ -635,15 +701,37 @@ def intestazione(casa, trasf):
             f'{badge(casa)}<b>{esc(nome_squadra(casa, True))}</b>')
 
 
-def scheda_partita(casa, trasf, r, ora, miglior):
-    lt = st.session_state.linee.get(f"tot_{casa}")
-    h = f'<div class="card2"><div class="riga"><div>{intestazione(casa, trasf)}</div><span class="s">{esc(ora)}</span></div>'
-    h += gauge(r["totale"], lt)
-    if miglior:
-        h += (f'<div class="riga" style="margin-top:8px"><span>Gioca: <b>{esc(miglior["testo"])}</b> '
-              f'<span class="s">(stima {esc(miglior["stima"])})</span></span>{pillola(miglior["z"])}</div>')
+def scheda_partita(casa, trasf, r, info, miglior):
+    """Scheda partita con stato (finale/live/orario), punteggio reale e stima."""
+    stato = info.get("stato")
+    if stato == "post":
+        chip, col = "Finale", VERDE
+    elif stato == "in":
+        chip, col = f"Live · {info.get('dettaglio', '')}", ARANCIO
     else:
-        h += '<div class="s" style="margin-top:8px">Nessuna linea inserita</div>'
+        chip, col = info.get("ora", ""), GRIGIO
+
+    def riga(ab, stima, reale):
+        vuoto = reale is None or pd.isna(reale)
+        punti = "–" if vuoto else f"{int(reale)}"
+        stima_txt = f'<span class="s">stima {stima:.1f}</span>' if stima is not None else ""
+        return (f'<div class="riga" style="padding:4px 0"><div>{badge(ab)}<b>{esc(nome_squadra(ab, True))}</b></div>'
+                f'<div style="display:flex;align-items:baseline;gap:10px">{stima_txt}'
+                f'<b style="font-size:22px;min-width:40px;text-align:right">{punti}</b></div></div>')
+
+    h = f'<div class="card2"><span class="pill" style="color:{col}">{esc(chip)}</span><div style="height:6px"></div>'
+    h += riga(trasf, r["pt_trasf"] if r else None, info.get("pt_trasf_reale"))
+    h += riga(casa, r["pt_casa"] if r else None, info.get("pt_casa_reale"))
+    pc, pt_ = info.get("pt_casa_reale"), info.get("pt_trasf_reale")
+    if r and stato in ("post", "in") and pc is not None and pt_ is not None and not pd.isna(pc) and not pd.isna(pt_):
+        h += f'<div class="s" style="margin-top:4px">Totale reale {int(pc) + int(pt_)} · stima {r["totale"]:.1f}</div>'
+    if r:
+        h += gauge(r["totale"], st.session_state.linee.get(f"tot_{casa}"))
+        if miglior:
+            h += (f'<div class="riga" style="margin-top:8px"><span>Gioca: <b>{esc(miglior["testo"])}</b> '
+                  f'<span class="s">(stima {esc(miglior["stima"])})</span></span>{pillola(miglior["z"])}</div>')
+        else:
+            h += '<div class="s" style="margin-top:8px">Nessuna linea inserita</div>'
     return h + "</div>"
 
 
@@ -729,9 +817,11 @@ auto = consigli_automatici(proiezioni, gioc_df)
 miglior = {}
 for gi in giocate:
     miglior.setdefault(gi["partita"], gi)
+infop = {(g["casa"], g["trasf"]): g.to_dict() for _, g in partite.iterrows()}
 
-if "vista" not in st.session_state:
-    st.session_state.vista = "Giornata"
+VISTE = ["Combo", "Partite", "Studio partita"]
+if st.session_state.get("vista") not in VISTE:
+    st.session_state.vista = "Combo"
 
 
 def vai_studio(etich):
@@ -739,30 +829,95 @@ def vai_studio(etich):
     st.session_state.vista = "Studio partita"
 
 
-vista = st.segmented_control("Vista", ["Giornata", "Studio partita"], key="vista",
-                             label_visibility="collapsed") or "Giornata"
+def aggiorna():
+    st.cache_data.clear()
 
-# ---------------------------------------------------------------- GIORNATA
-if vista == "Giornata":
+
+vista = st.segmented_control("Vista", VISTE, key="vista", label_visibility="collapsed") or "Combo"
+
+SCATOLE = [
+    ("Squadre e totali", "ti-chart-bar", ("Vincente", "Squadra", "Totale")),
+    ("Punti", "ti-target", ("Punti",)),
+    ("Assist", "ti-users", ("Assist",)),
+    ("Rimbalzi", "ti-arrows-up-down", ("Rimbalzi",)),
+]
+
+
+def riga_scatola(x, ultima):
+    col = VERDE if x["prob"] >= 0.80 else ARANCIO
+    sq = badge(x["squadra"]) if x.get("squadra") else ""
+    return (
+        f'<div style="margin-bottom:{0 if ultima else 12}px"><div class="riga"><span>{esc(x["testo"])}</span>'
+        f'<b style="color:{col}">{x["prob"]:.0%}</b></div>'
+        f'<div style="height:6px;background:#2a2f3a;border-radius:3px;margin-top:5px">'
+        f'<div style="width:{x["prob"] * 100:.0f}%;height:6px;background:{col};border-radius:3px"></div></div>'
+        f'<div class="s" style="margin-top:4px">{sq}{esc(x["partita"])}</div></div>'
+    )
+
+
+def scatola(titolo, icona, lista):
+    top = lista[:3]
+    return (
+        f'<div class="card2" style="margin-bottom:10px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">'
+        f'<i class="ti {icona}" style="font-size:18px;color:{ARANCIO}"></i><b>{esc(titolo)}</b></div>'
+        + "".join(riga_scatola(x, i == len(top) - 1) for i, x in enumerate(top)) + "</div>"
+    )
+
+
+# ------------------------------------------------------------------- COMBO
+if vista == "Combo":
+    st.caption(f"Aggiornato alle {aggiornato} · punteggi ogni 2 minuti, statistiche ogni 30")
+    st.button("Aggiorna ora", on_click=aggiorna, use_container_width=True)
+    gruppi, scelte = [], []
+    for titolo, icona, tipi in SCATOLE:
+        lista = [x for x in auto if x["tipo"] in tipi]
+        gruppi.append((titolo, icona, lista))
+        if lista:
+            scelte.append(lista[0])
+    if scelte:
+        combinata = 1.0
+        for x in scelte:
+            combinata *= x["prob"]
+        st.markdown(
+            f'<div class="box"><div class="s" style="color:#ffb066">I primi di ogni riquadro, tutti insieme</div>'
+            f'<div style="font-size:24px;font-weight:600">circa {combinata:.0%}</div>'
+            f'<div class="s">Stima che assume eventi indipendenti: più giocate metti insieme, più è difficile vincerle tutte.</div></div>',
+            unsafe_allow_html=True,
+        )
+    st.caption("Per ogni giocata l'app trova la soglia che si supera con probabilità di almeno il 70% secondo il modello. "
+               "Le percentuali sono stime, non certezze.")
+    if players.empty:
+        st.info("Statistiche dei giocatori non disponibili con questa fonte: restano squadre e totali.")
+    for titolo, icona, lista in gruppi:
+        if not lista:
+            continue
+        st.markdown(scatola(titolo, icona, lista), unsafe_allow_html=True)
+        if len(lista) > 3:
+            with st.expander(f"Altre giocate: {titolo} ({len(lista) - 3})"):
+                for x in lista[3:]:
+                    card(f"{x['partita']} · {x['tipo']}", x["testo"], f"{x['prob']:.0%}", f"stima {x['stima']}", GRIGIO)
+    if not players.empty:
+        st.markdown("### I migliori della giornata")
+        st.markdown(blocco_migliori(pd.concat(gioc_df.values()), "<b>Tutte le partite di oggi</b>", n=5,
+                                    mostra_squadra=True), unsafe_allow_html=True)
+
+# ----------------------------------------------------------------- PARTITE
+elif vista == "Partite":
     forti = sum(1 for g in giocate if forza(g["z"])[0] == "Forte")
-    st.caption(f"{len(proiezioni)} partite · {forti} segnali forti · {len(giocate)} giocate analizzate")
+    st.caption(f"Aggiornato alle {aggiornato} · {len(proiezioni)} partite · {forti} segnali forti")
+    st.button("Aggiorna ora", key="agg2", on_click=aggiorna, use_container_width=True)
     for (casa, trasf), r in proiezioni.items():
         et = etichetta(casa, trasf)
-        st.markdown(scheda_partita(casa, trasf, r, ore.get((casa, trasf), ""), miglior.get(et)),
+        st.markdown(scheda_partita(casa, trasf, r, infop.get((casa, trasf), {}), miglior.get(et)),
                     unsafe_allow_html=True)
         st.button("Studia questa partita", key=f"vai_{casa}", on_click=vai_studio, args=(et,),
                   use_container_width=True)
-    st.markdown("### Giocate consigliate dall'app")
-    st.caption("Calcolate in autonomia dalle statistiche: per ogni giocatore l'app trova la soglia che supera "
-               "con probabilità di almeno il 70%. La percentuale è una stima del modello, non una certezza.")
-    auto_giornata = [x for x in auto if x["tipo"] != "Totale"]
-    if auto_giornata:
-        elenco_auto(auto_giornata, limite=12)
-    st.markdown("### I migliori della giornata")
-    if not players.empty:
-        tutti_g = pd.concat(gioc_df.values())
-        st.markdown(blocco_migliori(tutti_g, "<b>Tutte le partite di oggi</b>", n=5, mostra_squadra=True),
-                    unsafe_allow_html=True)
+    if not ieri.empty:
+        st.markdown("### Risultati di ieri")
+        for _, g in ieri.iterrows():
+            c, t = g["casa"], g["trasf"]
+            r2 = proietta_partita(c, t, teams) if c in teams.index and t in teams.index else None
+            st.markdown(scheda_partita(c, t, r2, g.to_dict(), None), unsafe_allow_html=True)
     st.markdown("### Confronto con le linee del bookmaker")
     if giocate:
         st.caption("Qui l'app confronta la sua stima con le linee che hai inserito (o che ESPN ha trovato).")
