@@ -1,7 +1,7 @@
 import { info, nome } from "./squadre.js";
 import { proiettaPartita, proiettaGiocatori, consigli, proposte, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
 import { aggiornaQuote, chiaveGara } from "./quote.js";
-import { caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, caricaGamelog, dataUS, get } from "./espn.js";
+import { romaYMD, caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, caricaGamelog, dataUS, get } from "./espn.js";
 
 const J = (o, ttl = 0) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": ttl ? `public, max-age=${ttl}` : "no-store", "access-control-allow-origin": "*" } });
 const ERR = (m, s = 500) => new Response(JSON.stringify({ errore: m }), { status: s, headers: { "content-type": "application/json" } });
@@ -55,9 +55,9 @@ async function leggiForma(env) {
   if (!dbOk(env)) return { mappa: {}, stato: null };
   try {
     const righe = await db(env, "GET", { tabella: "nba_forma", params: { select: "pid,dati,agg", limit: "3000" } });
-    const mappa = {}; let stato = null, quote = null;
-    for (const r of righe) { if (r.pid === "_stato") stato = r.dati; else if (r.pid === "_quote") quote = r.dati; else if (!r.pid.startsWith("_")) mappa[r.pid] = r.dati; }
-    return { mappa, stato, quote, n: Object.keys(mappa).length };
+    const mappa = {}; let stato = null, quote = null, calib = null, avvisi = null;
+    for (const r of righe) { if (r.pid === "_stato") stato = r.dati; else if (r.pid === "_quote") quote = r.dati; else if (r.pid === "_calib") calib = r.dati; else if (r.pid === "_avvisi") avvisi = r.dati; else if (!r.pid.startsWith("_")) mappa[r.pid] = r.dati; }
+    return { mappa, stato, quote, calib, avvisi, n: Object.keys(mappa).length };
   } catch (e) { return { mappa: {}, stato: null, errore: e.message }; }
 }
 
@@ -93,6 +93,72 @@ async function cronQuote(env, forza = false) {
   return { aggiornato: !!nuovo, crediti: nuovo?.crediti ?? f.quote?.crediti ?? null, errore: nuovo?.errore || null };
 }
 
+// ---- Taratura automatica: confronta le percentuali previste con i risultati reali dello Storico (almeno 25 esiti per categoria)
+function calcolaCalib(righe) {
+  const per = {};
+  for (const r of righe) { if (r.esito !== 0 && r.esito !== 1) continue; const c = (per[r.tipo] ||= { n: 0, hit: 0, pred: 0 }); c.n++; c.hit += r.esito; c.pred += r.prob; }
+  const out = {};
+  for (const [t, c] of Object.entries(per)) {
+    if (c.n < 25) continue;
+    const K = 20, predM = c.pred / c.n, oss = (c.hit + K * predM) / (c.n + K); // pochi dati: ci si fida del modello
+    out[t] = { n: c.n, fattore: Math.max(0.8, Math.min(1.05, oss / predM)), previsto: predM, reale: c.hit / c.n };
+  }
+  return out;
+}
+function applicaCalib(picks, calib) {
+  if (!calib || !Object.keys(calib).length) return picks;
+  return picks.map((p) => { const c = calib[p.tipo]; if (!c || Math.abs(c.fattore - 1) < 0.01) return p;
+    return { ...p, probGrezza: p.prob, prob: Math.min(0.97, p.prob * c.fattore), motivo: p.motivo + ` (Percentuale tarata sullo Storico: finora ${p.tipo} previsti al ${Math.round(c.previsto * 100)}%, centrati al ${Math.round(c.reale * 100)}%.)` }; }).sort((a, b) => b.prob - a.prob);
+}
+async function salvaCalib(env, righe) {
+  const c = calcolaCalib(righe);
+  await db(env, "POST", { tabella: "nba_forma", params: { on_conflict: "pid" }, corpo: [{ pid: "_calib", nome: "calibrazione", sq: "", dati: c, agg: new Date().toISOString() }], prefer: "resolution=merge-duplicates" });
+}
+
+// ---- Avvisi su Telegram (facoltativi: segreti TELEGRAM_TOKEN e TELEGRAM_CHAT_ID)
+async function telegram(env, testo) {
+  const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text: testo.slice(0, 4000), disable_web_page_preview: true }) });
+  if (!r.ok) throw new Error(`Telegram ${r.status} ${(await r.text()).slice(0, 100)}`);
+}
+const pc = (x) => Math.round(x * 100) + "%";
+async function cronAvvisi(env) {
+  if (!env.TELEGRAM_TOKEN || !env.TELEGRAM_CHAT_ID) return { saltato: "mancano TELEGRAM_TOKEN e TELEGRAM_CHAT_ID" };
+  if (!dbOk(env)) return { saltato: "serve Supabase" };
+  const g = await caricaGiorno(0, null, 60), ymd = romaYMD(Date.now()), ora = Date.now();
+  if (!g.partite.length) return { saltato: "nessuna partita" };
+  const f = await leggiForma(env), stato = f.avvisi || {}, oggi = stato[ymd] || {}, fatto = [];
+  const pre = g.partite.filter((p) => p.stato === "pre"), prima = pre.map((p) => Date.parse(p.iso)).sort((a, b) => a - b)[0];
+  // 1) riepilogo della giornata: una volta, nelle 4 ore prima della prima partita
+  if (!oggi.d && prima && prima - ora < 4 * 3600e3) {
+    const D = await apiGiorno(env, { waitUntil: (p) => p.catch(() => {}) }, 0);
+    const prePick = D.picks.filter((x) => D.partite.find((p) => p.id === x.g && p.stato === "pre")).slice(0, 6);
+    let t = `🏀 NBA di oggi: ${g.partite.length} partite, la prima alle ${g.partite.filter((p) => p.stato === "pre").sort((a, b) => (a.iso < b.iso ? -1 : 1))[0].ora.slice(-5)}\n`;
+    if (prePick.length) t += `\nMigliori giocate\n` + prePick.map((x) => `• ${x.testo} (${x.partita}) ${pc(x.prob)}`).join("\n");
+    const s = (D.schedine || []).find((x) => x.id === "sicura") || (D.schedine || [])[0];
+    if (s) t += `\n\nSchedina "${s.nome}" (tutte centrate ${pc(s.prob)}, quota giusta ${s.quotaEqua.toFixed(2)})\n` + s.legs.map((l) => `• ${l.testo} ${pc(l.prob)}`).join("\n");
+    t += `\n\nSono stime del modello, non certezze.${env.APP_URL ? "\n" + env.APP_URL : ""}`;
+    await telegram(env, t); oggi.d = 1; fatto.push("riepilogo");
+  }
+  // 2) risultati: una volta, quando tutte le partite del giorno sono finite
+  if (!oggi.e && g.partite.every((p) => p.stato === "post")) {
+    const S = await apiStorico(env), ids = new Set(g.partite.map((p) => p.id));
+    const r = (S.righe || []).filter((x) => ids.has(String(x.event_id)) && (x.esito === 0 || x.esito === 1));
+    if (r.length) {
+      const ok = r.filter((x) => x.esito === 1).length, per = {};
+      for (const x of r) { const c = (per[x.tipo] ||= [0, 0]); c[1]++; if (x.esito === 1) c[0]++; }
+      let t = `📊 Risultati di oggi: ${ok} giocate su ${r.length} centrate (${pc(ok / r.length)})\n\n` + Object.entries(per).map(([k, [a, b]]) => `• ${k}: ${a}/${b}`).join("\n");
+      const best = r.filter((x) => x.esito === 1).sort((a, b) => b.prob - a.prob).slice(0, 3);
+      if (best.length) t += `\n\nCentrate: ` + best.map((x) => x.testo).join("; ");
+      await telegram(env, t); oggi.e = 1; fatto.push("risultati");
+    }
+  }
+  if (fatto.length) {
+    stato[ymd] = oggi; for (const k of Object.keys(stato)) if (k < romaYMD(ora - 3 * 86400e3)) delete stato[k];
+    await db(env, "POST", { tabella: "nba_forma", params: { on_conflict: "pid" }, corpo: [{ pid: "_avvisi", nome: "avvisi", sq: "", dati: stato, agg: new Date().toISOString() }], prefer: "resolution=merge-duplicates" });
+  }
+  return { inviati: fatto };
+}
+
 async function apiDiag(env) {
   const v = [], prova = async (nome, fn) => { try { v.push({ nome, ok: true, dettaglio: String(await fn()) }); } catch (e) { v.push({ nome, ok: false, dettaglio: String(e.message || e) }); } };
   let gg = null, stat = null;
@@ -102,13 +168,23 @@ async function apiDiag(env) {
   await prova("Registro consigli (Supabase)", async () => { if (!dbOk(env)) throw new Error("secrets SUPABASE_URL / SUPABASE_KEY mancanti"); const r = await db(env, "GET", { params: { select: "chiave", limit: "5000" } }); return `${r.length} consigli salvati`; });
   await prova("Forma recente giocatori", async () => { if (!dbOk(env)) throw new Error("serve Supabase"); const f = await leggiForma(env); if (f.errore) throw new Error(f.errore + " (hai creato la tabella nba_forma?)"); const s = f.stato || {}; return `${f.n} giocatori con le ultime 10 partite${s.ultimo ? `, ultimo aggiornamento ${s.ultimo.slice(0, 16)}, ${s.falliti} falliti, ${s.da_fare} da fare` : ", nessun aggiornamento ancora"}${s.errore ? ", errore: " + s.errore : ""}`; });
   await prova("Quote bookmaker (The Odds API)", async () => {
-    if (!env.ODDS_API_KEY) throw new Error("manca il segreto ODDS_API_KEY (vedi istruzioni)");
+    if (!env.ODDS_API_KEY) return "non attive (facoltative): si usa la linea di ESPN per totale e spread";
     if (!dbOk(env)) throw new Error("serve Supabase");
     const q = (await leggiForma(env)).quote;
     if (!q || !q.t) return "chiave presente, nessuna quota ancora scaricata (parte quando ci sono partite nelle prossime 14 ore)";
     const np = Object.values(q.props || {}).reduce((a, x) => a + Object.keys(x).length, 0);
     if (q.errore) throw new Error(q.errore + ` (crediti rimasti: ${q.crediti ?? "?"})`);
     return `${Object.keys(q.giochi || {}).length} partite con linee, ${np} quote giocatori, aggiornate alle ${q.t.slice(11, 16)} UTC, crediti rimasti ${q.crediti ?? "?"}`;
+  });
+  await prova("Avvisi Telegram", async () => {
+    if (!env.TELEGRAM_TOKEN || !env.TELEGRAM_CHAT_ID) return "non attivi (facoltativi): servono i segreti TELEGRAM_TOKEN e TELEGRAM_CHAT_ID";
+    const f = dbOk(env) ? await leggiForma(env) : {}; const a = f.avvisi || {}, k = Object.keys(a).sort().slice(-1)[0];
+    return `attivi${k ? `, ultimo giorno con avvisi ${k} (${a[k].d ? "riepilogo" : ""}${a[k].d && a[k].e ? " + " : ""}${a[k].e ? "risultati" : ""})` : ", nessun avviso ancora inviato"}`;
+  });
+  await prova("Taratura sullo Storico", async () => {
+    if (!dbOk(env)) throw new Error("serve Supabase");
+    const c = (await leggiForma(env)).calib || {}; const k = Object.keys(c);
+    return k.length ? k.map((t) => `${t} ×${c[t].fattore.toFixed(2)} (${c[t].n} esiti)`).join(" · ") : "non ancora attiva: servono almeno 25 esiti per categoria";
   });
   await prova("Calendario squadra (ultimi incontri)", async () => `${(await caricaUltime("BOS")).length} partite trovate per BOS`);
   return { aggiornato: new Date().toISOString(), voci: v };
@@ -121,7 +197,7 @@ async function apiGiorno(env, ctx, offset, data = null) {
   try { infortuni = await caricaInfortuni(); } catch (e) { errori.push("infortuni: " + e.message); }
   const b2b = [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))];
   const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, b2b, fm.mappa, fm.quote, g.linee);
-  const picks = consigli(gare);
+  const picks = applicaCalib(consigli(gare), fm.calib);
   const sigle = new Set(); gare.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
   g.ieri.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
   let registro = "non configurato";
@@ -237,18 +313,20 @@ export default {
       if (p === "/api/esiti") return J(await apiEsiti(off, data), 120);
       if (p === "/api/storico") return J(await apiStorico(env));
       if (p === "/api/aggiorna-quote") return J(await cronQuote(env, true));
+      if (p === "/api/avviso-prova") { if (!env.TELEGRAM_TOKEN || url.searchParams.get("k") !== String(env.TELEGRAM_CHAT_ID)) return ERR("non autorizzato", 403); await telegram(env, "✅ NBA Schedine è collegata a Telegram: da ora ricevi qui il riepilogo prima delle partite e i risultati a fine giornata."); return J({ ok: true }); }
       if (p === "/api/ultime") { const s = (url.searchParams.get("s") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(s)) return ERR("sigla non valida", 400); return J({ s, ultime: await caricaUltime(s) }, 600); }
       return ERR("non trovato", 404);
     } catch (e) { return ERR(String(e.message || e)); }
   },
   // ogni 30 minuti: salva i consigli delle partite che non sono iniziate e verifica quelle finite
   async scheduled(event, env, ctx) {
+    if (event.cron === "5,35 * * * *") { ctx.waitUntil(cronAvvisi(env).catch(() => {})); return; }
     if (event.cron === "20,50 * * * *") { ctx.waitUntil(cronQuote(env).catch(() => {})); return; }
     if (event.cron === "10,40 * * * *") { ctx.waitUntil(aggiornaForma(env).catch(() => {})); return; }
     ctx.waitUntil((async () => {
       try { await apiGiorno(env, ctx, 0); } catch {}
       try { await apiGiorno(env, ctx, 1); } catch {}
-      try { await apiStorico(env); } catch {}
+      try { const S = await apiStorico(env); if (S.attivo) await salvaCalib(env, S.righe); } catch {}
     })());
   },
 };
