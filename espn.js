@@ -2,12 +2,24 @@ const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
 const ESPN_V2 = "https://site.api.espn.com/apis/v2/sports/basketball/nba";
 const ESPN_ATL = "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/statistics/byathlete";
 
+const HDR = { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", Accept: "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9", Referer: "https://www.espn.com/", Origin: "https://www.espn.com" };
+// Se l'host "site.web.api" rifiuta (403), si riprova con "site.api" che serve gli stessi dati
 export async function get(url, params = {}, ttl = 60) {
-  const u = new URL(url);
-  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) u.searchParams.set(k, v);
-  const r = await fetch(u.toString(), { headers: { "User-Agent": "Mozilla/5.0" }, cf: { cacheTtl: ttl, cacheEverything: true } });
-  if (!r.ok) throw new Error(`ESPN HTTP ${r.status}`);
-  return r.json();
+  const varianti = [url];
+  if (url.includes("//site.web.api.espn.com")) varianti.push(url.replace("//site.web.api.espn.com", "//site.api.espn.com"));
+  let ultimo = null;
+  for (const base of varianti) {
+    const u = new URL(base);
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) u.searchParams.set(k, v);
+    for (const cf of [{ cacheTtl: ttl, cacheEverything: true }, undefined]) {
+      try {
+        const r = await fetch(u.toString(), { headers: HDR, ...(cf ? { cf } : {}) });
+        if (r.ok) return r.json();
+        ultimo = `ESPN HTTP ${r.status} (${u.hostname})`;
+      } catch (e) { ultimo = `ESPN ${e.message}`; }
+    }
+  }
+  throw new Error(ultimo || "ESPN errore");
 }
 
 const fmtRoma = new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
