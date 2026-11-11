@@ -37,7 +37,7 @@ function anello(p, col, size = 52) {
   const r = size / 2 - 5, L = 2 * Math.PI * r, c = size / 2;
   return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="#232836" stroke-width="6"/><circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(L * p / 100).toFixed(1)} ${L.toFixed(1)}" transform="rotate(-90 ${c} ${c})"/><text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" fill="#f2f2f2" font-size="${size > 60 ? 18 : 13}" font-weight="600">${Math.round(p)}%</text></svg>`;
 }
-const colProb = (p) => (p >= 0.8 ? GR : OR);
+const colProb = (p) => (p >= 0.85 ? "#3ddc84" : p >= 0.78 ? "#9be564" : p >= 0.72 ? "#ffc24a" : OR);
 function cardPick(x) { return `<div class="card cardp"><div style="min-width:0"><div class="s">${esc(x.partita)} · ${esc(x.tipo)}</div><div style="font-weight:500">${esc(x.testo)}</div></div><div><div class="v" style="color:${colProb(x.prob)}">${pct(x.prob)}</div><div class="e">stima ${esc(x.stima)}</div></div></div>`; }
 function rigaPick(D, x) {
   const vis = x.pid ? foto(x.pid, 34) : x.squadra ? logo(x.squadra, 30) : `<span class="ph" style="width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-chart-bar" style="color:${OR}"></i></span>`;
@@ -77,16 +77,21 @@ function schedaPartita(D, p, topPick, cliccabile) {
   const t = T(D, p.casa), v = T(D, p.trasf), r = p.r;
   let chip, col = MU;
   if (p.stato === "post") { chip = "Finale"; col = GR; } else if (p.stato === "in") { chip = `<span class="dot"></span>Live · ${esc(p.dettaglio)}`; col = OR; } else chip = esc(p.ora);
-  const riga = (ab, ruolo, stima, reale) => `<div class="riga" style="padding:5px 0"><div class="lg">${logo(ab, 38)}<div><div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div></div></div><div><div class="big${p.stato === "in" ? " liveN" : ""}" data-sc="${ruolo === "casa" ? "c" : "t"}">${reale == null ? "–" : reale}</div><div class="s" style="text-align:right">stima ${stima.toFixed(1)}</div></div></div>`;
   const fav = r.margine > 0 ? p.casa : p.trasf;
-  const cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#4a5060" : v.c;
+  const cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#5a6378" : v.c;
+  const team = (ab, ruolo, stima) => `<div class="tm">${logo(ab, 54)}<div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div><div class="st">${stima.toFixed(0)} <span>stimati</span></div></div>`;
+  const centro = p.stato === "pre"
+    ? `<div class="mid"><div class="ora">${esc(String(p.ora).slice(-5))}</div><div class="s">${esc(String(p.ora).slice(0, 5))}</div></div>`
+    : `<div class="mid"><div class="sc"><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="t">${p.ptTr ?? 0}</span><i>-</i><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="c">${p.ptCasa ?? 0}</span></div></div>`;
   let chips = `<span class="chip">Totale ${r.totale.toFixed(1)}</span><span class="chip">Spread ${esc(T(D, fav).b)} -${Math.abs(r.margine).toFixed(1)}</span>`;
   if (topPick) chips += `<span class="chip" style="color:${GR}">Top: ${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
-  return `<${tag} class="card${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="border-left:3px solid ${cc}"><div class="riga" style="margin-bottom:6px"><span class="pill" data-pill style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>${riga(p.trasf, "trasferta", r.ptTr, p.ptTr)}${riga(p.casa, "casa", r.ptCasa, p.ptCasa)}
-  <div class="s" style="margin:10px 0 0">Probabilità di vittoria</div><div class="bar"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
-  <div class="riga s" style="margin:4px 0 8px"><span>${esc(p.trasf)} ${pct(1 - r.pw)}</span><span>${esc(p.casa)} ${pct(r.pw)}</span></div>${chips}</${tag}>`;
+  return `<${tag} class="card gm${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
+  <div class="riga" style="margin-bottom:10px"><span class="pill" data-pill style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>
+  <div class="mu">${team(p.trasf, "trasferta", r.ptTr)}${centro}${team(p.casa, "casa", r.ptCasa)}</div>
+  <div class="bar"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
+  <div class="riga s" style="margin:4px 0 10px"><span><b style="color:#e8eaf0">${pct(1 - r.pw)}</b> ${esc(p.trasf)}</span><span>probabilità di vittoria</span><span>${esc(p.casa)} <b style="color:#e8eaf0">${pct(r.pw)}</b></span></div>${chips}</${tag}>`;
 }
 const raggruppa = (picks) => [["Molto probabili (80% o più)", picks.filter((x) => x.prob >= 0.8)], ["Probabili (70-80%)", picks.filter((x) => x.prob >= 0.7 && x.prob < 0.8)], ["Da valutare (sotto il 70%)", picks.filter((x) => x.prob < 0.7)]];
 
@@ -108,8 +113,8 @@ function migliori(D) {
   if (!scelte.length) return "";
   return `<div class="riga" style="margin:14px 0 8px"><h2 style="margin:0">Migliori giocate</h2><a class="s" href="#/combo" style="color:var(--or)">Vedi tutte <i class="ti ti-chevron-right"></i></a></div>
   <div class="strip hscroll">${scelte.map((x, i) => `<a class="best${i === 0 ? " top" : ""}" href="#/partita/${x.g}">
-    <div class="riga"><span class="tag">${i === 0 ? "★ La più forte" : esc(x.tipo)}</span>${anello(x.prob * 100, colProb(x.prob), 44)}</div>
-    <div class="bt">${esc(x.testo)}</div><div class="s">${esc(x.partita)}</div><div class="s" style="margin-top:6px">Stima ${esc(x.stima)}</div></a>`).join("")}</div>`;
+    <div class="riga"><span class="tag">${i === 0 ? "★ La più forte" : esc(x.tipo)}</span>${anello(x.prob * 100, colProb(x.prob), 46)}</div>
+    <div class="lg" style="margin:10px 0 4px">${x.pid ? foto(x.pid, 40) : x.squadra ? logo(x.squadra, 36) : `<span class="ph" style="width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-chart-bar" style="color:${OR}"></i></span>`}<div class="bt" style="margin:0">${esc(x.testo)}</div></div><div class="s">${esc(x.partita)}</div><div class="s" style="margin-top:6px">Stima ${esc(x.stima)}</div></a>`).join("")}</div>`;
 }
 
 // ---------- PARTITE
@@ -336,11 +341,11 @@ function ultimeHtml(D, sig, ul) {
 
 // ---------- LIVE
 function schedaLive(D, p) {
-  const t = T(D, p.casa), v = T(D, p.trasf), cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#4a5060" : v.c;
-  const riga = (ab, ruolo, pt) => `<div class="riga" style="padding:4px 0"><div class="lg">${logo(ab, 38)}<div><div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div></div></div><div class="big">${pt}</div></div>`;
-  return `<div class="card" style="border-left:3px solid ${cc}"><div class="riga" style="margin-bottom:6px"><span class="pill" style="color:${OR}"><span class="dot"></span>Live · ${esc(p.dettaglio)}</span><span class="s">Gara giocata al ${Math.round(p.f * 100)}%</span></div>
-  ${riga(p.trasf, "trasferta", p.ptTr)}${riga(p.casa, "casa", p.ptCasa)}
-  <div class="bar" style="margin-top:6px;height:4px"><div style="width:${(p.f * 100).toFixed(0)}%;background:${OR}"></div></div>
+  const t = T(D, p.casa), v = T(D, p.trasf), cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#5a6378" : v.c;
+  const tm = (ab, ruolo) => `<div class="tm">${logo(ab, 54)}<div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div></div>`;
+  return `<div class="card gm inlive" style="--ca:${ct};--cb:${cc}"><div class="riga" style="margin-bottom:10px"><span class="pill" style="color:${OR}"><span class="dot"></span>Live · ${esc(p.dettaglio)}</span><span class="s">Giocata al ${Math.round(p.f * 100)}%</span></div>
+  <div class="mu">${tm(p.trasf, "trasferta")}<div class="mid"><div class="sc"><span class="big liveN">${p.ptTr}</span><i>-</i><span class="big liveN">${p.ptCasa}</span></div></div>${tm(p.casa, "casa")}</div>
+  <div class="bar" style="height:4px"><div style="width:${(p.f * 100).toFixed(0)}%;background:${OR}"></div></div>
   <div class="s" style="margin:10px 0 0">Probabilità di vittoria in questo momento</div><div class="bar"><div style="width:${((1 - p.pwLive) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
   <div class="riga s" style="margin:4px 0 8px"><span>${esc(p.trasf)} ${pct(1 - p.pwLive)}</span><span>${esc(p.casa)} ${pct(p.pwLive)}</span></div>
   <span class="chip">Totale ora ${p.ptCasa + p.ptTr}</span><span class="chip">Finale stimato ${p.proiTot.toFixed(0)}</span><span class="chip">Prima della gara ${p.r.totale.toFixed(0)}</span>${p.mercato ? `<span class="chip" style="color:${AM}">Bookmaker ${p.mercato.linea}: over ${pct(p.mercato.pMk)} (${p.mercato.minuti} min fa)</span><span class="chip" style="color:${colProb(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}">Nostra stima: ${p.mercato.pNostra >= 0.5 ? "over" : "under"} ${pct(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}</span>` : ""}</div>`;
