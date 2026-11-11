@@ -288,7 +288,12 @@ async function vistaLive(primo = true) {
     if (p.segnali && p.segnali.length) h += `<div class="sub"><span class="pill" style="color:${OR}"><span class="dot"></span>Segnali live</span> <span class="s">nati durante la partita</span></div>` + p.segnali.map(rigaSegnale).join("");
     const picks = [...p.picks].sort((a, b) => (a.pLive >= 0.995) - (b.pLive >= 0.995) || b.pLive - a.pLive);
     if (picks.length) h += `<div class="sub">Giocate di questa partita</div>` + picks.map(rigaLive).join("");
-    if (p.giocatori.length) h += `<div class="sub">Giocatori in campo</div><div class="card">` + `<div class="riga s" style="padding-bottom:4px"><span>Giocatore</span><span>PT · RIM · AST · MIN</span></div>` + p.giocatori.map((g) => `<div class="riga rg"><span style="min-width:0">${esc(g.nome)} <span class="s">${esc(g.sq)}</span></span><b style="white-space:nowrap">${g.pts ?? 0} · ${g.reb ?? 0} · ${g.ast ?? 0} · ${Math.round(g.min ?? 0)}</b></div>`).join("") + `</div>`;
+    if (p.giocatori.length) {
+      const tab = (sq) => { const l = p.giocatori.filter((g) => g.sq === sq); if (!l.length) return ""; const rg = (g) => `<div class="riga rg"><span style="min-width:0">${esc(g.nome)}</span><b style="white-space:nowrap">${g.pts ?? 0} · ${g.reb ?? 0} · ${g.ast ?? 0} · ${Math.round(g.min ?? 0)}</b></div>`;
+        const tit = l.filter((g) => g.tit), pan = l.filter((g) => !g.tit);
+        return `<div class="card"><div class="riga" style="padding-bottom:4px"><div class="lg">${logo(sq, 24)}<b>${esc(T(D, sq).n)}</b></div><span class="s">PT · RIM · AST · MIN</span></div>${tit.length ? `<div class="s" style="padding:4px 0">QUINTETTO BASE</div>` + tit.map(rg).join("") : ""}${pan.length ? `<div class="s" style="padding:8px 0 4px">PANCHINA</div>` + pan.map(rg).join("") : ""}</div>`; };
+      h += `<div class="sub">Formazioni e statistiche</div>` + tab(p.trasf) + tab(p.casa);
+    }
     h += `<a class="btn" style="display:block;text-align:center" href="#/partita/${p.id}">Apri lo studio di questa partita</a>`;
   }
   const y = window.scrollY; APP.innerHTML = h; window.scrollTo(0, y);
