@@ -15,6 +15,7 @@ const pct = (p) => Math.round(p * 100) + "%";
 
 // ---------- dati
 let giorno = ls.get("giorno", 0);
+if (typeof giorno !== "number" && !/^\d{8}$/.test(String(giorno))) giorno = 0;
 const cache = {};
 async function api(path, ttl = 0) {
   const c = cache[path];
@@ -25,7 +26,8 @@ async function api(path, ttl = 0) {
   cache[path] = { t: Date.now(), d };
   return d;
 }
-const dati = (force) => { if (force) delete cache["/api/giorno?g=" + giorno]; return api("/api/giorno?g=" + giorno, 40000); };
+const qs = () => (typeof giorno === "number" ? "g=" + giorno : "d=" + giorno);
+const dati = (force) => { if (force) delete cache["/api/giorno?" + qs()]; return api("/api/giorno?" + qs(), 40000); };
 
 // ---------- pezzi grafici
 const T = (D, ab) => (D.squadre && D.squadre[ab]) || { n: ab, b: ab, c: "#4a5060" };
@@ -45,8 +47,29 @@ function topBar(D) {
   const ora = D && D.aggiornato ? new Date(D.aggiornato).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : "";
   return `<div class="top"><img class="logo" src="/icon-192.png" alt=""><div><div class="nome">NBA Schedine</div><div class="s">Studio e consigli sul basket${ora ? " · agg. " + ora : ""}</div></div></div>`;
 }
-function giorniChips() { return `<div class="days">${GIORNI.map(([n, o]) => `<button class="chipbtn${o === giorno ? " on" : ""}" data-g="${o}">${n}</button>`).join("")}</div>`; }
-function bindGiorni() { APP.querySelectorAll("[data-g]").forEach((b) => b.onclick = () => { giorno = +b.dataset.g; ls.set("giorno", giorno); route(); }); }
+const GS = ["DOM", "LUN", "MAR", "MER", "GIO", "VEN", "SAB"], MESI = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
+const fmtET = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+function etGiorno(off) {
+  const [y, m, d] = fmtET.format(new Date(Date.now() + off * 86400000)).split("-").map(Number);
+  return { ymd: `${y}${String(m).padStart(2, "0")}${String(d).padStart(2, "0")}`, y, m, d, dow: new Date(Date.UTC(y, m - 1, d)).getUTCDay() };
+}
+function giorniChips() {
+  const sel = typeof giorno === "string" ? giorno : etGiorno(giorno).ymd;
+  const selM = +sel.slice(4, 6), selY = sel.slice(0, 4);
+  const celle = [];
+  for (let o = -3; o <= 7; o++) celle.push([o, etGiorno(o)]);
+  const fuori = !celle.some(([, g]) => g.ymd === sel);
+  const extra = fuori ? `<button class="dd on" data-d="${sel}"><span class="dw">${GS[new Date(Date.UTC(+selY, selM - 1, +sel.slice(6, 8))).getUTCDay()]}</span><b>${+sel.slice(6, 8)}</b><span class="oo"></span></button>` : "";
+  return `<div class="riga" style="margin:2px 0 8px"><b style="font-size:15px">${MESI[selM - 1]} ${selY}</b><label class="cal chipbtn"><i class="ti ti-calendar"></i> Calendario<input type="date" id="cal" value="${selY}-${String(selM).padStart(2, "0")}-${sel.slice(6, 8)}"></label></div>
+  <div class="strip" id="strip">${extra}${celle.map(([o, g]) => `<button class="dd${g.ymd === sel ? " on" : ""}${o === 0 ? " today" : ""}" data-g="${o}"><span class="dw">${GS[g.dow]}</span><b>${g.d}</b><span class="oo">${o === 0 ? "Oggi" : ""}</span></button>`).join("")}</div>`;
+}
+function bindGiorni() {
+  APP.querySelectorAll("[data-g]").forEach((b) => b.onclick = () => { giorno = +b.dataset.g; ls.set("giorno", giorno); route(); });
+  APP.querySelectorAll("[data-d]").forEach((b) => b.onclick = () => { giorno = b.dataset.d; ls.set("giorno", giorno); route(); });
+  const c = $("#cal"); if (c) c.onchange = () => { if (c.value) { giorno = c.value.replaceAll("-", ""); ls.set("giorno", giorno); route(); } };
+  const st = $("#strip"), on = st && st.querySelector(".dd.on");
+  if (on) st.scrollLeft = on.offsetLeft - st.clientWidth / 2 + on.offsetWidth / 2;
+}
 const skel = () => `<div class="skel"></div><div class="skel"></div><div class="skel"></div>`;
 const errBox = (e) => `<div class="err"><b>Non riesco a caricare i dati.</b><br>${esc(e.message || e)}<br><button class="btn" style="margin-top:10px" onclick="route(true)">Riprova</button></div>`;
 
@@ -67,6 +90,22 @@ function schedaPartita(D, p, topPick, cliccabile) {
 }
 const raggruppa = (picks) => [["Molto probabili (80% o più)", picks.filter((x) => x.prob >= 0.8)], ["Probabili (70-80%)", picks.filter((x) => x.prob >= 0.7 && x.prob < 0.8)], ["Da valutare (sotto il 70%)", picks.filter((x) => x.prob < 0.7)]];
 
+function migliori(D) {
+  const viste = new Set(), scelte = [];
+  for (const x of D.picks) {
+    if (x.prob < 0.74) break;
+    const k = x.g + x.tipo;
+    if (viste.has(k)) continue;
+    viste.add(k); scelte.push(x);
+    if (scelte.length >= 8) break;
+  }
+  if (!scelte.length) return "";
+  return `<div class="riga" style="margin:14px 0 8px"><h2 style="margin:0">Migliori giocate</h2><a class="s" href="#/combo" style="color:var(--or)">Vedi tutte <i class="ti ti-chevron-right"></i></a></div>
+  <div class="strip hscroll">${scelte.map((x, i) => `<a class="best${i === 0 ? " top" : ""}" href="#/partita/${x.g}">
+    <div class="riga"><span class="tag">${i === 0 ? "★ La più forte" : esc(x.tipo)}</span>${anello(x.prob * 100, colProb(x.prob), 44)}</div>
+    <div class="bt">${esc(x.testo)}</div><div class="s">${esc(x.partita)}</div><div class="s" style="margin-top:6px">Stima ${esc(x.stima)}</div></a>`).join("")}</div>`;
+}
+
 // ---------- PARTITE
 async function vistaPartite(force) {
   APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
@@ -74,6 +113,8 @@ async function vistaPartite(force) {
   const top = (id) => D.picks.find((x) => x.g === id);
   let h = topBar(D) + giorniChips();
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
+  h += migliori(D);
+  if (D.partite.length) h += `<h2>Tutte le partite</h2>`;
   h += D.partite.map((p) => schedaPartita(D, p, top(p.id), true)).join("");
   if (D.ieri.length) {
     h += `<h2>Risultati di ieri</h2>` + D.ieri.map((p) => `<div class="card"><div class="riga"><div class="lg">${logo(p.trasf, 28)}<b>${esc(p.trasf)}</b></div><b style="font-size:18px">${p.ptTr} - ${p.ptCasa}</b><div class="lg"><b>${esc(p.casa)}</b>${logo(p.casa, 28)}</div></div></div>`).join("");
@@ -244,7 +285,7 @@ function rigaEsito(r) {
 }
 async function vistaEsiti() {
   APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
-  let E; try { E = await api("/api/esiti?g=" + giorno, 60000); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
+  let E; try { E = await api("/api/esiti?" + qs(), 60000); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
   const ris = E.risultati, val = ris.filter((x) => x.esito !== 2);
   let h = topBar() + giorniChips();
   if (!val.length) h += `<div class="vuoto">Nessuna partita finita da verificare per questo giorno. Torna a partite concluse.</div>`;
