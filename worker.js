@@ -1,5 +1,5 @@
 import { info, nome } from "./squadre.js";
-import { proiettaPartita, proiettaGiocatori, consigli, valuta, phi, STD } from "./modello.js";
+import { proiettaPartita, proiettaGiocatori, consigli, valuta, phi, STD, frazioneGara, probLive } from "./modello.js";
 import { caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, dataUS } from "./espn.js";
 
 const J = (o, ttl = 0) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": ttl ? `public, max-age=${ttl}` : "no-store", "access-control-allow-origin": "*" } });
@@ -108,17 +108,48 @@ async function apiStorico(env) {
   return { attivo: true, righe };
 }
 
+
+async function apiLive() {
+  const [g, stat] = await Promise.all([caricaGiorno(0), caricaStatistiche()]);
+  let infortuni = {}; try { infortuni = await caricaInfortuni(); } catch {}
+  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))]);
+  const picks = consigli(gare);
+  const inCorso = gare.filter((x) => x.stato === "in");
+  const out = await Promise.all(inCorso.map(async (x) => {
+    let box = {}; try { box = await caricaBoxscore(x.id, 15); } catch {}
+    const f = frazioneGara(x.periodo, x.orologio), ga = { ...x, f, finita: false };
+    const mie = picks.filter((q) => q.g === x.id).map((q) => { const l = probLive(q, ga, box, x.giocatori); return l ? { ...q, adesso: l.adesso, pLive: l.p, cur: l.cur } : null; }).filter(Boolean);
+    const gioc = Object.values(box).filter((b) => b.min != null && b.min > 0).sort((a, b) => (b.pts || 0) - (a.pts || 0)).slice(0, 10)
+      .map((b) => ({ nome: b.nome, sq: b.sq, pts: b.pts, reb: b.reb, ast: b.ast, min: b.min }));
+    const proiTot = x.ptCasa + x.ptTr + x.r.totale * (1 - f);
+    const pwLive = phi((x.ptCasa - x.ptTr + x.r.margine * (1 - f)) / Math.max(STD.Spread * Math.sqrt(1 - f), 0.6));
+    return { id: x.id, casa: x.casa, trasf: x.trasf, ptCasa: x.ptCasa, ptTr: x.ptTr, periodo: x.periodo, orologio: x.orologio, dettaglio: x.dettaglio, f, proiTot, pwLive,
+      r: x.r, giocatori: gioc, picks: mie };
+  }));
+  const sq = {}; out.forEach((x) => { sq[x.casa] = info(x.casa); sq[x.trasf] = info(x.trasf); });
+  return { aggiornato: new Date().toISOString(), squadre: sq, partite: out, totali: gare.length, finite: gare.filter((x) => x.stato === "post").length, prossime: gare.filter((x) => x.stato === "pre").map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora })) };
+}
+
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url), p = url.pathname;
     if (!p.startsWith("/api/")) return env.ASSETS.fetch(req);
     try {
       const off = Math.max(-2, Math.min(3, parseInt(url.searchParams.get("g") || "0") || 0));
+      if (p === "/api/live") { const d = await apiLive(); for (const q of d.prossime) { d.squadre[q.casa] = info(q.casa); d.squadre[q.trasf] = info(q.trasf); } return J(d, 10); }
       if (p === "/api/giorno") return J(await apiGiorno(env, ctx, off), 45);
       if (p === "/api/esiti") return J(await apiEsiti(off), 120);
       if (p === "/api/storico") return J(await apiStorico(env));
       if (p === "/api/ultime") { const s = (url.searchParams.get("s") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(s)) return ERR("sigla non valida", 400); return J({ s, ultime: await caricaUltime(s) }, 600); }
       return ERR("non trovato", 404);
     } catch (e) { return ERR(String(e.message || e)); }
+  },
+  // ogni 30 minuti: salva i consigli delle partite che non sono iniziate e verifica quelle finite
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async () => {
+      try { await apiGiorno(env, ctx, 0); } catch {}
+      try { await apiGiorno(env, ctx, 1); } catch {}
+      try { await apiStorico(env); } catch {}
+    })());
   },
 };
