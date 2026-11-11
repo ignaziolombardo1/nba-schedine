@@ -113,6 +113,7 @@ async function vistaPartite(force) {
   const top = (id) => D.picks.find((x) => x.g === id);
   let h = topBar(D) + giorniChips();
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
+  if (D.partite.length && !D.partite.some((p) => p.giocatori && p.giocatori.length)) h += `<div class="card" style="border-color:${RD}"><b style="color:${RD}">Giocatori non disponibili</b><div class="s" style="margin-top:4px">${esc((D.diag || []).filter((x) => /giocatori/.test(x)).join(" · ") || "ESPN non ha restituito le statistiche dei giocatori.")}</div></div>`;
   h += migliori(D);
   if (D.partite.length) h += `<h2>Tutte le partite</h2>`;
   h += D.partite.map((p) => schedaPartita(D, p, top(p.id), true)).join("");
