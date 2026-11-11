@@ -148,3 +148,48 @@ export async function caricaUltime(sigla, n = 5) {
   }
   return out.sort((a, b) => (a.data < b.data ? -1 : 1)).slice(-n).reverse();
 }
+
+const ESPN_GL = "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes";
+// Ultime partite di un giocatore: medie di minuti, punti, rimbalzi e assist
+export async function caricaForma(pid, n = 10) {
+  const d = await get(`${ESPN_GL}/${pid}/gamelog`, {}, 3600);
+  const nomi = d.names || d.labels || [], idx = {};
+  nomi.forEach((l, i) => { idx[String(l).toUpperCase()] = i; });
+  const ev = d.events || {}, righe = [];
+  const tipi = d.seasonTypes || [];
+  const reg = tipi.filter((t) => /regular/i.test(t.displayName || ""));
+  for (const t of reg.length ? reg : tipi) for (const c of t.categories || []) for (const e of c.events || []) {
+    const inf = ev[e.eventId] || {};
+    righe.push({ data: String(inf.gameDate || ""), st: e.stats || [] });
+  }
+  righe.sort((a, b) => (a.data < b.data ? 1 : -1));
+  const ult = righe.slice(0, n), val = (r, k) => { const i = idx[k]; const x = i != null ? parseFloat(r.st[i]) : NaN; return Number.isFinite(x) ? x : null; };
+  const media = (k) => { const v = ult.map((r) => val(r, k)).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  if (ult.length < 3) throw new Error("poche partite nel gamelog");
+  return { n: ult.length, min: media("MIN"), pts: media("PTS"), reb: media("REB"), ast: media("AST") };
+}
+
+// Ultime partite di un giocatore (gamelog ESPN). Restituisce {pts,reb,ast,min} dalla più recente, o null se il formato non è riconosciuto.
+export async function caricaGamelog(pid, n = 10) {
+  const d = await get(`https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/${pid}/gamelog`, {}, 3600);
+  const nomi = (d.names || d.labels || []).map((x) => String(x).toLowerCase());
+  const trova = (...alt) => nomi.findIndex((x) => alt.includes(x));
+  const iMin = trova("minutes", "min"), iPts = trova("points", "pts"), iReb = trova("totalrebounds", "rebounds", "reb"), iAst = trova("assists", "ast");
+  if (iMin < 0 || iPts < 0 || iReb < 0 || iAst < 0) throw new Error("gamelog: colonne non riconosciute (" + nomi.slice(0, 14).join(",") + ")");
+  const date = {}; const ev = d.events || {};
+  for (const [id, e] of Object.entries(ev)) date[id] = e.gameDate || e.date || "";
+  const righe = [];
+  for (const st of d.seasonTypes || []) {
+    const nomeSt = String(st.displayName || "").toLowerCase();
+    if (nomeSt.includes("pre")) continue;
+    for (const cat of st.categories || []) for (const e of cat.events || []) {
+      const v = (i) => { const x = parseFloat((e.stats || [])[i]); return Number.isFinite(x) ? x : null; };
+      const mn = v(iMin); if (!mn || mn <= 0) continue;
+      righe.push({ data: date[e.eventId] || "", pts: v(iPts), reb: v(iReb), ast: v(iAst), min: mn });
+    }
+  }
+  if (!righe.length) throw new Error("gamelog: nessuna partita trovata");
+  righe.sort((a, b) => (a.data < b.data ? 1 : -1));
+  const u = righe.slice(0, n);
+  return { pts: u.map((x) => x.pts ?? 0), reb: u.map((x) => x.reb ?? 0), ast: u.map((x) => x.ast ?? 0), min: u.map((x) => x.min) };
+}
