@@ -625,6 +625,19 @@ function route(force) {
 }
 window.route = route;
 window.addEventListener("hashchange", () => route());
-document.addEventListener("visibilitychange", () => { if (!document.hidden && !location.hash.startsWith("#/partita")) route(); });
+// Al ritorno nell'app non si ricarica la pagina: la pagina Partite si aggiorna in silenzio (senza tornare in cima), il Live riprende subito
+let ultimoNascosto = Date.now();
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden) { ultimoNascosto = Date.now(); return; }
+  const h = location.hash.replace(/^#/, "") || "/";
+  if (h.startsWith("/live")) { clearTimeout(timer); vistaLive(false); return; }
+  if (h === "/" && Date.now() - ultimoNascosto > 30000) {
+    try {
+      const D = await dati(true);
+      if ((location.hash.replace(/^#/, "") || "/") !== "/") return;
+      clearTimeout(timer); const y = window.scrollY; disegnaPartite(D, true); window.scrollTo(0, y);
+    } catch {}
+  }
+});
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 route();
