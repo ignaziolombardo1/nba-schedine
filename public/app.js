@@ -216,14 +216,27 @@ function aggiornaTot(r) {
   const po = 1 - phi((v - r.totale) / 17);
   el.innerHTML = `Over ${v}: <b style="color:${po >= 0.7 ? GR : po >= 0.5 ? OR : MU}">${pct(po)}</b> · Under: <b style="color:${1 - po >= 0.7 ? GR : 1 - po >= 0.5 ? OR : MU}">${pct(1 - po)}</b>`;
 }
+function spark(vals, soglia, col) {
+  const mx = Math.max(...vals, soglia || 0, 1), w = 200, h = 34, bw = w / vals.length;
+  const bars = vals.map((v, i) => { const bh = Math.max(2, v / mx * (h - 4)); return `<rect x="${(i * bw + 1).toFixed(1)}" y="${(h - bh).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${bh.toFixed(1)}" rx="2" fill="${soglia != null && v > soglia ? GR : col}" opacity="${soglia != null && v > soglia ? 1 : 0.55}"/>`; }).join("");
+  const ln = soglia != null ? `<line x1="0" x2="${w}" y1="${(h - soglia / mx * (h - 4)).toFixed(1)}" y2="${(h - soglia / mx * (h - 4)).toFixed(1)}" stroke="${AM}" stroke-dasharray="3 3" stroke-width="1"/>` : "";
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${bars}${ln}</svg>`;
+}
+function formaHtml(x, mer, c, o) {
+  const k = { Punti: "pts", Rimbalzi: "reb", Assist: "ast" }[mer];
+  if (!x.conForma || !x.ult || !x.ult[k]) return `<div class="s" style="margin-top:8px">Forma recente non ancora disponibile (si usa la media stagione).</div>`;
+  const v = x.ult[k], m10 = v.reduce((a, b) => a + b, 0) / v.length, diff = m10 - (mer === "Punti" ? x.stagione : o.media);
+  const tag = diff >= 1.5 ? `<span style="color:${GR}">in forma</span>` : diff <= -1.5 ? `<span style="color:${RD}">in calo</span>` : `<span class="s">nella media</span>`;
+  return `<div style="margin-top:10px"><div class="riga s"><span>ULTIME ${v.length} GARE</span><span>${tag} · media ${m10.toFixed(1)}</span></div>${spark(v, o.rec, MU)}</div>`;
+}
 function schedaGiocatore(D, gid, x, mer, c) {
   const o = x[c.k], dub = x.inf === "dubbio" ? `<span class="pill" style="color:${AM};margin-left:6px">Dubbio</span>` : "";
   const tile = (n, v, on) => `<div class="tile${on ? " on" : ""}"><b>${v.toFixed(1)}</b><span>${n}</span></div>`;
   const rec = o.rec != null ? `<div style="margin-top:10px"><span class="s">CONSIGLIATO</span><div style="font-weight:600;color:${GR}">over ${o.rec} ${c.u} · ${pct(o.lad.find((q) => q[0] === o.rec)[1])}</div></div>` : `<div class="s" style="margin-top:10px">Nessuna soglia sopra il 70%: giocatore poco sicuro.</div>`;
   const lad = o.lad.map(([t, pr]) => { const col = pr >= 0.7 ? GR : pr >= 0.5 ? AM : MU; return `<span style="color:${col};${t === o.rec ? "border:1px solid " + col : ""}">over ${t} · ${pct(pr)}</span>`; }).join("");
   const key = `${gid}_${x.pid || x.nome}_${mer}`;
-  return `<div class="card pl"><div class="lg">${foto(x.pid, 48)}<div style="min-width:0"><div class="tn">${esc(x.nome)}${dub}</div><div class="s">${esc(x.sq)} · ${Math.round(x.min)} min</div></div></div>
-  <div class="row3">${tile("Punti", x.pts.v, mer === "Punti")}${tile("Rimbalzi", x.reb.v, mer === "Rimbalzi")}${tile("Assist", x.ast.v, mer === "Assist")}</div>${rec}
+  return `<div class="card pl"><div class="lg">${foto(x.pid, 48)}<div style="min-width:0"><div class="tn">${esc(x.nome)}${dub}</div><div class="s">${esc(x.sq)} · ${Math.round(x.min)} min attesi</div></div></div>
+  <div class="row3">${tile("Punti", x.pts.v, mer === "Punti")}${tile("Rimbalzi", x.reb.v, mer === "Rimbalzi")}${tile("Assist", x.ast.v, mer === "Assist")}</div>${rec}${formaHtml(x, mer, c, o)}
   <div class="s" style="margin-top:8px">ALTRE SOGLIE POSSIBILI</div><div class="lad">${lad}</div>
   <input class="linea" inputmode="decimal" placeholder="Tua linea ${mer.toLowerCase()} (es. ${(Math.round(o.v * 2) / 2)})" data-lk="${esc(key)}" data-v="${o.v}" data-sd="${o.sd}" value="${esc(ls.get("L_" + key, ""))}"><div class="s" data-lp="${esc(key)}"></div></div>`;
 }
@@ -322,6 +335,17 @@ async function vistaStorico() {
       h += `<h2>Ultimi esiti</h2>` + val.slice(0, 30).map(rigaEsito).join("");
     }
   }
+  h += `<div class="cap" style="text-align:center;margin-top:18px"><a href="#/diag" style="color:${OR}"><i class="ti ti-stethoscope"></i> Controllo dei dati</a></div>`;
+  APP.innerHTML = h;
+}
+
+async function vistaDiag() {
+  APP.innerHTML = topBar() + skel();
+  let D; try { D = await api("/api/diag", 0); } catch (e) { APP.innerHTML = topBar() + errBox(e); return; }
+  const v = D.controlli || D.voci || [];
+  let h = topBar() + `<h2>Controllo dei dati</h2><div class="cap" style="margin-top:0">Verifica una per una le fonti usate dall'app. Se una voce è rossa, il motivo è scritto sotto.</div>`;
+  h += v.map((x) => `<div class="card"><div class="riga"><b>${esc(x.nome)}</b><span class="pill" style="color:${x.ok ? GR : RD}">${x.ok ? "OK" : "Errore"}</span></div><div class="s" style="margin-top:4px">${esc(x.dettaglio)}</div></div>`).join("");
+  h += `<div class="cap">Controllato alle ${esc(new Date(D.ora || D.aggiornato || Date.now()).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }))}. <a href="#/diag" onclick="route(true);return false" style="color:${OR}">Ricontrolla</a></div>`;
   APP.innerHTML = h;
 }
 
@@ -330,13 +354,14 @@ let timer = null;
 function route(force) {
   clearTimeout(timer);
   const hsh = location.hash.replace(/^#/, "") || "/";
-  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/combo") ? "combo" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : "partite";
+  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/combo") ? "combo" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const m = /^\/partita\/(\d+)/.exec(hsh);
   if (m) vistaStudio(m[1], force === true);
   else if (attivo === "live") vistaLive(true);
   else if (attivo === "combo") vistaCombo(force === true);
   else if (attivo === "esiti") vistaEsiti();
+  else if (hsh.startsWith("/diag")) vistaDiag();
   else if (attivo === "storico") vistaStorico();
   else vistaPartite(force === true);
   if (!m) window.scrollTo(0, 0);
