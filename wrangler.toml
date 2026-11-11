@@ -8,4 +8,4 @@ binding = "ASSETS"
 run_worker_first = ["/api/*"]
 
 [triggers]
-crons = ["*/30 * * * *"]
+crons = ["*/30 * * * *", "10,40 * * * *"]
