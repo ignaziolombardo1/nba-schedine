@@ -110,3 +110,41 @@ export function valuta(x, g, box) {
   const ok = lato === "over" ? val > soglia : val < soglia;
   return [ok ? 1 : 0, `fatto ${val}`];
 }
+
+// ---------- LIVE
+export function frazioneGara(periodo, orologio) {
+  const m = /^(\d+):(\d+)/.exec(orologio || "") || /^(\d+)(?:\.\d+)?$/.exec(orologio || "");
+  let rem = 0;
+  if (m) rem = m[2] !== undefined && /:/.test(orologio) ? parseInt(m[1]) + parseInt(m[2]) / 60 : parseFloat(orologio);
+  const rimasto = periodo <= 4 ? (4 - periodo) * 12 + rem : rem;
+  return Math.max(0, Math.min(0.995, 1 - rimasto / 48));
+}
+
+// Probabilità aggiornata di una giocata a partita in corso. gara: {casa,trasf,ptCasa,ptTr,r,f,finita}; box: boxscore live
+export function probLive(x, gara, box, giocatori) {
+  const { casa, trasf, ptCasa, ptTr, r, f, finita } = gara, rest = Math.max(0, 1 - f);
+  const sdR = (sd) => Math.max(sd * Math.sqrt(rest), finita ? 0.01 : 0.6);
+  const m = /(over|under) (\d+(?:\.\d+)?)/.exec(x.testo);
+  const lato = m && m[1], T = m && parseFloat(m[2]);
+  if (x.tipo === "Vincente") {
+    const media = ptCasa - ptTr + r.margine * rest, pc = phi(media / sdR(STD.Spread));
+    return { adesso: `${ptCasa - ptTr > 0 ? casa : trasf} +${Math.abs(ptCasa - ptTr)}`, p: x.squadra === casa ? pc : 1 - pc };
+  }
+  if (!m) return null;
+  let cur, exp, sd;
+  if (x.tipo === "Squadra") { const sq = x.squadra === casa; cur = sq ? ptCasa : ptTr; exp = cur + (sq ? r.ptCasa : r.ptTr) * rest; sd = sdR(STD.Squadra); }
+  else if (x.tipo === "Totale") { cur = ptCasa + ptTr; exp = cur + r.totale * rest; sd = sdR(STD.Totale); }
+  else if (MERCATI[x.tipo]) {
+    const k = MERCATI[x.tipo].k, pl = giocatori.find((q) => (q.pid && q.pid === x.pid) || q.nome === x.testo.split(" over")[0].trim());
+    if (!pl) return null;
+    const o = pl[k], b = (box || {})[pl.nome.trim().toLowerCase()];
+    const mp = b && b.min != null ? b.min : 0, c = b && b[k] != null ? b[k] : 0;
+    const restoMin = finita ? 0 : Math.max(pl.min - mp, 2);
+    const pm = o.v / pl.min, w = mp / (mp + 12), ritmo = mp > 0 ? c / mp : pm;
+    cur = c; exp = c + restoMin * (pm * (1 - w) + ritmo * w); sd = Math.max(o.sd * Math.sqrt(restoMin / pl.min), finita ? 0.01 : 0.6);
+    const out = lato === "over" ? (cur > T ? 1 : 1 - phi((T - exp) / sd)) : (cur > T ? 0 : phi((T - exp) / sd));
+    return { adesso: `${cur} ${MERCATI[x.tipo].unita} (${Math.round(mp)} min)`, p: out, cur, exp, mp };
+  } else return null;
+  const out = lato === "over" ? (cur > T ? 1 : 1 - phi((T - exp) / sd)) : (cur > T ? 0 : phi((T - exp) / sd));
+  return { adesso: String(cur), p: out, cur, exp };
+}
