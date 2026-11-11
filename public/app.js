@@ -92,7 +92,7 @@ const raggruppa = (picks) => [["Molto probabili (80% o più)", picks.filter((x) 
 
 function confrontoMercato(D) {
   if (!D.partite.length) return "";
-  if (!D.valore || !D.valore.length) return `<div class="cap" style="margin:6px 0">Quote bookmaker non ancora disponibili${D.quote ? " per le partite di oggi (si scaricano nelle ore prima dell'inizio)" : ": serve la chiave ODDS_API_KEY, vedi Storico → Controllo dei dati"}.</div>`;
+  if (!D.valore || !D.valore.length) return "";
   return `<h2>Modello contro bookmaker</h2><div class="cap" style="margin-top:0">Giocatori dove il nostro calcolo, unito al mercato, vede più probabilità di quelle dei bookmaker. Il mercato di solito è più preciso: usalo come segnale da verificare, non come certezza.</div>` +
     D.valore.slice(0, 8).map((v) => `<div class="card riga" style="gap:10px;padding:10px 12px"><div class="lg" style="flex:1;min-width:0">${foto(v.pid, 36)}<div style="min-width:0"><div style="font-weight:600">${esc(v.nome)} ${v.lato} ${v.linea}</div><div class="s">${esc(v.mercato)} · ${esc(v.partita)} · ${divTag(v.div)}</div></div></div><div style="text-align:right"><div style="font-size:19px;font-weight:600;color:${colProb(v.pFin)}">${pct(v.pFin)}</div><div class="s">mercato ${pct(v.pMk)} · modello ${pct(v.pMod)}</div></div></div>`).join("");
 }

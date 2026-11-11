@@ -18,13 +18,18 @@ async function db(env, metodo, { params, corpo, prefer, tabella = "nba_consigli"
   const t = await r.text(); return t ? JSON.parse(t) : [];
 }
 
-function costruisci(partite, teams, players, infortuni, b2b, forma = {}, quote = null) {
+function costruisci(partite, teams, players, infortuni, b2b, forma = {}, quote = null, linee = {}) {
   const out = [];
   for (const p of partite) {
     if (!teams[p.casa] || !teams[p.trasf]) continue;
     // le quote prepartita si usano solo per le partite non ancora iniziate
     const k = chiaveGara(p.casa, p.trasf), usa = quote && p.stato === "pre";
-    const qg = usa ? (quote.giochi || {})[k] : null, qp = usa ? (quote.props || {})[k] : null;
+    let qg = usa ? (quote.giochi || {})[k] : null; const qp = usa ? (quote.props || {})[k] : null;
+    // senza Odds API: si usa la linea di ESPN (un solo bookmaker, nessun prezzo: vale come mediana del mercato, cioè 50%)
+    if (!qg && p.stato === "pre" && (linee["tot_" + p.casa] != null || linee["spr_" + p.casa] != null)) {
+      const lt = linee["tot_" + p.casa], ls = linee["spr_" + p.casa];
+      qg = { tot: lt != null ? { linea: lt, pOver: 0.5, n: 1, libri: [{ b: "ESPN", o: "-", u: "-" }] } : null, spr: ls != null ? { linea: ls, pCasa: 0.5, n: 1, libri: [{ b: "ESPN", o: "-", u: "-" }] } : null };
+    }
     const r = proiettaPartita(p.casa, p.trasf, teams, b2b, qg);
     const giocatori = players.length ? [...proiettaGiocatori(p.casa, p.trasf, teams, players, infortuni, forma, r.margine, qp), ...proiettaGiocatori(p.trasf, p.casa, teams, players, infortuni, forma, -r.margine, qp)] : [];
     const inf = players.filter((q) => (q.sq === p.casa || q.sq === p.trasf) && q.min >= 20 && infortuni[q.nome.trim().toLowerCase()])
@@ -115,7 +120,7 @@ async function apiGiorno(env, ctx, offset, data = null) {
   let infortuni = {};
   try { infortuni = await caricaInfortuni(); } catch (e) { errori.push("infortuni: " + e.message); }
   const b2b = [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))];
-  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, b2b, fm.mappa, fm.quote);
+  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, b2b, fm.mappa, fm.quote, g.linee);
   const picks = consigli(gare);
   const sigle = new Set(); gare.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
   g.ieri.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
