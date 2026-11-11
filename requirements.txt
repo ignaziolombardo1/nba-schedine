@@ -1,5 +1,0 @@
-streamlit>=1.41
-pandas
-requests
-nba_api
-pillow
