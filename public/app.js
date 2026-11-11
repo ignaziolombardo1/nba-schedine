@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "21";
+const VERSIONE = "22";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Squadre e totali", "ti-chart-bar", ["Vincente", "Squadra", "Totale"]], ["Punti", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]]];
@@ -326,7 +326,16 @@ async function vistaRegistro() {
     h += statisticheRegistro(chiuse);
     h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div><div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div></div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div></div>`).join("");
   }
+  if (reg.length) h += `<div class="grid2" style="margin-top:6px"><button class="btn" id="csv" style="margin:0">Scarica CSV</button><button class="btn" id="bak" style="margin:0">Copia backup</button></div>`;
+  h += `<button class="btn" id="rip" style="margin:8px 0 0">Ripristina da backup incollato</button><div class="cap">Il registro vive solo su questo telefono: ogni tanto copia il backup e conservalo (ad esempio nelle note).</div>`;
   APP.innerHTML = h;
+  const csv = $("#csv"); if (csv) csv.onclick = () => {
+    const R = ls.get("registro", []), q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const t = ["data;partita;giocata;tipo;quota;puntata;probabilita;esito;guadagno"].concat(R.map((r) => [r.data, r.nome, r.testo, r.tipo, r.quota, r.puntata, r.prob, r.esito == null ? "" : r.esito, r.esito == null ? "" : (r.esito === 1 ? r.puntata * (r.quota - 1) : -r.puntata).toFixed(2)].map(q).join(";"))).join("\n");
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\ufeff" + t], { type: "text/csv" })); a.download = "registro-nba.csv"; a.click();
+  };
+  const bak = $("#bak"); if (bak) bak.onclick = async () => { try { await navigator.clipboard.writeText(JSON.stringify(ls.get("registro", []))); bak.textContent = "Copiato ✓"; } catch { bak.textContent = "Copia non riuscita"; } };
+  $("#rip").onclick = () => { const t = prompt("Incolla qui il backup copiato:"); if (!t) return; try { const a = JSON.parse(t); if (!Array.isArray(a)) throw 0; ls.set("registro", a); vistaRegistro(); } catch { alert("Backup non valido"); } };
   APP.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => { const r = ls.get("registro", []); r.splice(+b.dataset.del, 1); ls.set("registro", r); vistaRegistro(); });
 }
 
