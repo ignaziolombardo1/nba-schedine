@@ -44,7 +44,7 @@ function rigaPick(D, x) {
   return `<div class="pick">${anello(x.prob * 100, colProb(x.prob), 48)}${vis}<div style="min-width:0"><div class="t">${esc(x.testo)}</div><div class="s">${esc(x.partita)}</div></div></div>`;
 }
 function topBar(D) {
-  const ora = D && D.aggiornato ? new Date(D.aggiornato).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : "";
+  const ora = D && D.aggiornato ? new Date(D.aggiornato).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
   return `<div class="top"><img class="logo" src="/icon-192.png" alt=""><div><div class="nome">NBA Schedine</div><div class="s">Studio e consigli sul basket${ora ? " · agg. " + ora : ""}</div></div></div>`;
 }
 const GS = ["DOM", "LUN", "MAR", "MER", "GIO", "VEN", "SAB"], MESI = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
@@ -252,6 +252,10 @@ function schedaLive(D, p) {
   <div class="riga s" style="margin:4px 0 8px"><span>${esc(p.trasf)} ${pct(1 - p.pwLive)}</span><span>${esc(p.casa)} ${pct(p.pwLive)}</span></div>
   <span class="chip">Totale ora ${p.ptCasa + p.ptTr}</span><span class="chip">Finale stimato ${p.proiTot.toFixed(0)}</span><span class="chip">Prima della gara ${p.r.totale.toFixed(0)}</span></div>`;
 }
+function rigaSegnale(x) {
+  const vis = x.pid ? foto(x.pid, 34) : `<span class="ph" style="width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-bolt" style="color:${OR}"></i></span>`;
+  return `<div class="card seg"><div class="riga" style="gap:10px"><div class="lg" style="flex:1">${vis}<div style="min-width:0"><div style="font-weight:600">${esc(x.testo)}</div><div class="s">${esc(x.tipo)} · ora ${esc(x.adesso)} · stima ${esc(x.stima)}</div></div></div><div style="font-size:20px;font-weight:600;color:${colProb(x.prob)}">${pct(x.prob)}</div></div><div class="cap" style="margin:6px 0 0">${esc(x.motivo)}</div></div>`;
+}
 function rigaLive(x) {
   const hit = x.pLive >= 0.995 && x.cur != null, col = hit ? GR : x.pLive >= 0.7 ? GR : x.pLive >= 0.4 ? OR : RD;
   const delta = x.pLive - x.prob, fr = delta >= 0 ? "ti-arrow-up-right" : "ti-arrow-down-right";
@@ -259,22 +263,23 @@ function rigaLive(x) {
 }
 async function vistaLive(primo = true) {
   if (primo) APP.innerHTML = topBar() + skel();
-  let D; try { D = await api("/api/live", 8000); } catch (e) { if (primo) APP.innerHTML = topBar() + errBox(e); timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000); return; }
+  let D; try { D = await api("/api/live", 3000); } catch (e) { if (primo) APP.innerHTML = topBar() + errBox(e); timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000); return; }
   if (!location.hash.startsWith("#/live")) return;
-  let h = topBar(D) + `<div class="cap" style="margin-top:0">Si aggiorna da solo ogni 20 secondi. Le probabilità tengono conto di punteggio, tempo rimasto e minuti giocati.</div>`;
+  let h = topBar(D) + `<div class="cap" style="margin-top:0">Si aggiorna da solo ogni 6 secondi (ESPN pubblica i dati ogni 10-20 secondi circa). Le probabilità tengono conto di punteggio, tempo rimasto e minuti giocati.</div>`;
   if (!D.partite.length) {
     h += `<div class="vuoto"><b>Nessuna partita in corso.</b><br>Oggi: ${D.totali} partite, ${D.finite} finite.</div>`;
     if (D.prossime.length) h += `<h2>Prossime partite</h2>` + D.prossime.map((q) => `<a class="card riga" href="#/partita/${q.id}"><div class="lg">${logo(q.trasf, 28)}<b>${esc(q.trasf)}</b><span class="s">@</span>${logo(q.casa, 28)}<b>${esc(q.casa)}</b></div><span class="s">${esc(q.ora)}</span></a>`).join("");
   }
   for (const p of D.partite) {
     h += schedaLive(D, p);
+    if (p.segnali && p.segnali.length) h += `<div class="sub"><span class="pill" style="color:${OR}"><span class="dot"></span>Segnali live</span> <span class="s">nati durante la partita</span></div>` + p.segnali.map(rigaSegnale).join("");
     const picks = [...p.picks].sort((a, b) => (a.pLive >= 0.995) - (b.pLive >= 0.995) || b.pLive - a.pLive);
     if (picks.length) h += `<div class="sub">Giocate di questa partita</div>` + picks.map(rigaLive).join("");
     if (p.giocatori.length) h += `<div class="sub">Giocatori in campo</div><div class="card">` + `<div class="riga s" style="padding-bottom:4px"><span>Giocatore</span><span>PT · RIM · AST · MIN</span></div>` + p.giocatori.map((g) => `<div class="riga rg"><span style="min-width:0">${esc(g.nome)} <span class="s">${esc(g.sq)}</span></span><b style="white-space:nowrap">${g.pts ?? 0} · ${g.reb ?? 0} · ${g.ast ?? 0} · ${Math.round(g.min ?? 0)}</b></div>`).join("") + `</div>`;
     h += `<a class="btn" style="display:block;text-align:center" href="#/partita/${p.id}">Apri lo studio di questa partita</a>`;
   }
-  APP.innerHTML = h;
-  timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000);
+  const y = window.scrollY; APP.innerHTML = h; window.scrollTo(0, y);
+  timer = setTimeout(() => !document.hidden && location.hash.startsWith("#/live") && vistaLive(false), 6000);
 }
 
 // ---------- ESITI e STORICO
