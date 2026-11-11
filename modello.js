@@ -28,18 +28,30 @@ export function proiettaPartita(casa, trasf, teams, b2b = []) {
   return { ptCasa, ptTr, totale: ptCasa + ptTr, margine: ptCasa - ptTr };
 }
 
-export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}) {
+// Minuti attesi: nelle partite molto sbilanciate i titolari giocano meno (circa -0.8% ogni punto oltre 8 di margine, max -8%)
+export const fattoreMinuti = (margine) => { const m = Math.abs(margine); return m >= 8 ? 1 - Math.min(0.08, 0.008 * (m - 8)) : 1; };
+
+export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}, forma = {}, margine = 0) {
   const lega = Object.values(teams).reduce((a, t) => a + t.pa, 0) / Object.keys(teams).length;
   const fDif = teams[avv].pa / lega;
+  const media = (a) => a.reduce((x, y) => x + y, 0) / a.length;
   return players
     .filter((p) => p.sq === sig && p.min >= MIN_MINUTI && (infortuni[p.nome.trim().toLowerCase()] || {}).stato !== "out")
     .map((p) => {
       const inf = (infortuni[p.nome.trim().toLowerCase()] || {}).stato || "";
-      const val = { Punti: p.pts * fDif, Rimbalzi: p.reb, Assist: p.ast };
-      const o = { nome: p.nome, pid: p.pid, sq: sig, min: r1(p.min), inf, forma: r1(p.pts), stagione: r1(p.pts) };
+      const f = forma[p.pid], ok = f && f.pts && f.pts.length >= 5;
+      const l10 = ok ? { pts: media(f.pts), reb: media(f.reb), ast: media(f.ast), min: media(f.min) } : null;
+      // minuti attesi: mix tra ultime 10 e stagione, ridotti se la partita rischia di essere decisa presto
+      const min0 = l10 && l10.min > 0 ? 0.5 * l10.min + 0.5 * p.min : p.min;
+      const blow = Math.max(0, Math.abs(margine) - 8);
+      const minAtt = p.min >= 26 ? min0 * (1 - Math.min(0.10, 0.008 * blow)) : min0;
+      const tasso = (v10, vSt) => (l10 ? PESO_FORMA * (v10 / Math.max(l10.min, 1)) + (1 - PESO_FORMA) * (vSt / p.min) : vSt / p.min);
+      const val = { Punti: tasso(l10 && l10.pts, p.pts) * minAtt * fDif, Rimbalzi: tasso(l10 && l10.reb, p.reb) * minAtt, Assist: tasso(l10 && l10.ast, p.ast) * minAtt };
+      const o = { nome: p.nome, pid: p.pid, sq: sig, min: r1(minAtt), inf, forma: r1(l10 ? l10.pts : p.pts), stagione: r1(p.pts), conForma: !!l10,
+        ult: ok ? { pts: [...f.pts].reverse(), reb: [...f.reb].reverse(), ast: [...f.ast].reverse() } : null };
       for (const [m, c] of Object.entries(MERCATI)) {
         const v = r1(val[m]);
-        const sd = stdGiocatore(v, p.min, m);
+        const sd = stdGiocatore(v, minAtt, m);
         const lad = c.scalini.map((t) => ({ t, p: probOver(v, t, sd) })).filter((x) => x.p >= 0.2 && x.p <= 0.97);
         const buone = lad.filter((x) => x.p >= PROB_MIN);
         o[c.k] = { v, sd: r1(sd * 100) / 100, media: r1(m === "Punti" ? p.pts : m === "Rimbalzi" ? p.reb : p.ast), lad: lad.map((x) => [x.t, Math.round(x.p * 1000) / 1000]),
