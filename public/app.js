@@ -238,6 +238,7 @@ async function vistaStudio(id, force) {
   h += `<h2>Giocate consigliate</h2>`;
   if (!picks.length) h += `<div class="vuoto">Nessuna giocata sopra la soglia per questa partita.</div>`;
   for (const [t, l] of raggruppa(picks)) if (l.length) h += `<div class="sub">${esc(t)}</div>` + l.map((x) => cardPick(x) + `<div class="cap">${esc(x.motivo)}</div>`).join("");
+  h += `<h2>Testa a testa</h2><div id="h2h"><div class="skel" style="height:70px"></div></div>`;
   h += `<h2>Ultimi incontri</h2><div id="ultime"><div class="skel" style="height:90px"></div></div>`;
   if (p.giocatori.length) {
     h += `<h2>I migliori di ogni squadra</h2>`;
@@ -268,6 +269,13 @@ async function vistaStudio(id, force) {
   APP.querySelectorAll("[data-m]").forEach((b) => b.onclick = () => { ls.set("mercato", b.dataset.m); vistaStudio(id); });
   APP.querySelectorAll("input[data-lk]").forEach((i) => i.oninput = () => { ls.set("L_" + i.dataset.lk, i.value); probLinea(i); });
   APP.querySelectorAll("input[data-lk]").forEach(probLinea);
+  api(`/api/h2h?a=${p.casa}&b=${p.trasf}`, 600000).then((H) => {
+    const el = $("#h2h"); if (!el) return; const l = H.partite || [];
+    if (!l.length) { el.innerHTML = `<div class="cap">Nessuno scontro diretto tra queste squadre nella stagione in corso e nella scorsa.</div>`; return; }
+    const v = l.filter((x) => x.vinta).length, m = (f) => l.reduce((a, x) => a + f(x), 0) / l.length;
+    el.innerHTML = `<div class="card"><div class="riga"><div class="lg">${logo(p.casa, 28)}<b>${esc(T(D, p.casa).b)}</b></div><b style="font-size:22px;font-family:'Barlow Condensed',Inter,sans-serif">${v} - ${l.length - v}</b><div class="lg"><b>${esc(T(D, p.trasf).b)}</b>${logo(p.trasf, 28)}</div></div><div class="s" style="margin:6px 0 8px">Ultimi ${l.length} scontri: media ${m((x) => x.pf).toFixed(1)} a ${m((x) => x.pa).toFixed(1)} · totale medio ${m((x) => x.pf + x.pa).toFixed(1)}</div>` +
+      l.map((x) => `<div class="riga rg"><div><div style="font-weight:500">${x.casa ? "in casa di " + esc(T(D, p.casa).b) : "in casa di " + esc(T(D, p.trasf).b)}</div><div class="s">${esc(x.data)}</div></div><b style="color:${x.vinta ? GR : RD}">${x.pf}-${x.pa}</b></div>`).join("") + `</div>`;
+  }).catch(() => { const el = $("#h2h"); if (el) el.innerHTML = `<div class="cap">Scontri diretti non disponibili.</div>`; });
   Promise.all([p.casa, p.trasf].map((s) => api("/api/ultime?s=" + s, 600000).catch(() => null))).then((res) => {
     const el = $("#ultime"); if (!el) return;
     el.innerHTML = res.map((x, i) => ultimeHtml(D, [p.casa, p.trasf][i], x && x.ultime)).join("");

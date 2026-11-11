@@ -1,7 +1,7 @@
 import { info, nome } from "./squadre.js";
 import { proiettaPartita, proiettaGiocatori, consigli, proposte, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
 import { aggiornaQuote, chiaveGara } from "./quote.js";
-import { romaYMD, caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, caricaGamelog, dataUS, get } from "./espn.js";
+import { romaYMD, caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, testaATesta, caricaGamelog, dataUS, get } from "./espn.js";
 
 const J = (o, ttl = 0) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": ttl ? `public, max-age=${ttl}` : "no-store", "access-control-allow-origin": "*" } });
 const ERR = (m, s = 500) => new Response(JSON.stringify({ errore: m }), { status: s, headers: { "content-type": "application/json" } });
@@ -314,6 +314,7 @@ export default {
       if (p === "/api/storico") return J(await apiStorico(env));
       if (p === "/api/aggiorna-quote") return J(await cronQuote(env, true));
       if (p === "/api/avviso-prova") { if (!env.TELEGRAM_TOKEN || url.searchParams.get("k") !== String(env.TELEGRAM_CHAT_ID)) return ERR("non autorizzato", 403); await telegram(env, "✅ NBA Schedine è collegata a Telegram: da ora ricevi qui il riepilogo prima delle partite e i risultati a fine giornata."); return J({ ok: true }); }
+      if (p === "/api/h2h") { const x = (url.searchParams.get("a") || "").toUpperCase(), y = (url.searchParams.get("b") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(x) || !/^[A-Z]{2,4}$/.test(y)) return ERR("sigla non valida", 400); return J({ a: x, b: y, partite: await testaATesta(x, y) }, 1800); }
       if (p === "/api/ultime") { const s = (url.searchParams.get("s") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(s)) return ERR("sigla non valida", 400); return J({ s, ultime: await caricaUltime(s) }, 600); }
       return ERR("non trovato", 404);
     } catch (e) { return ERR(String(e.message || e)); }

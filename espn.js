@@ -149,8 +149,8 @@ export async function caricaBoxscore(eventId, ttl = 600) {
   return out;
 }
 
-export async function caricaUltime(sigla, n = 5) {
-  const d = await get(`${ESPN}/teams/${sigla.toLowerCase()}/schedule`, {}, 1800), out = [];
+export async function caricaUltime(sigla, n = 5, stagione = null) {
+  const d = await get(`${ESPN}/teams/${sigla.toLowerCase()}/schedule`, stagione ? { season: stagione } : {}, 1800), out = [];
   for (const ev of d.events || []) {
     const comp = (ev.competitions || [{}])[0], stt = ((comp.status || ev.status || {}).type) || {};
     if (!stt.completed) continue;
@@ -211,4 +211,12 @@ export async function caricaGamelog(pid, n = 10) {
   righe.sort((a, b) => (a.data < b.data ? 1 : -1));
   const u = righe.slice(0, n);
   return { pts: u.map((x) => x.pts ?? 0), reb: u.map((x) => x.reb ?? 0), ast: u.map((x) => x.ast ?? 0), min: u.map((x) => x.min) };
+}
+
+// Scontri diretti tra due squadre (stagione in corso e precedente), dal punto di vista di "a"
+export async function testaATesta(a, b) {
+  const now = new Date(), st = now.getUTCMonth() + 1 >= 10 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+  const [cur, prev] = await Promise.all([caricaUltime(a, 100, st).catch(() => []), caricaUltime(a, 100, st - 1).catch(() => [])]);
+  const viste = new Set();
+  return [...cur, ...prev].filter((x) => x.avv.toUpperCase() === b.toUpperCase() && !viste.has(x.data + x.pf + x.pa) && viste.add(x.data + x.pf + x.pa)).sort((x, y) => (x.data < y.data ? 1 : -1)).slice(0, 6);
 }
