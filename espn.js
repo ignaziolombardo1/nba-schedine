@@ -124,7 +124,7 @@ export async function caricaBoxscore(eventId, ttl = 600) {
       const n = (a.athlete || {}).displayName, st = a.stats || [];
       if (!n || !st.length) continue;
       const v = (k) => { const i = idx[k]; const x = i != null ? parseFloat(st[i]) : NaN; return Number.isFinite(x) ? x : null; };
-      out[n.trim().toLowerCase()] = { nome: n, sq: (team.team || {}).abbreviation, pts: v("PTS"), reb: v("REB"), ast: v("AST"), min: v("MIN") };
+      out[n.trim().toLowerCase()] = { nome: n, sq: (team.team || {}).abbreviation, pts: v("PTS"), reb: v("REB"), ast: v("AST"), min: v("MIN"), tit: !!a.starter };
     }
   }
   return out;
