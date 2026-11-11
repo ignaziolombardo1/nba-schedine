@@ -26,7 +26,7 @@ async function api(path, ttl = 0) {
   cache[path] = { t: Date.now(), d };
   return d;
 }
-const qs = () => (typeof giorno === "number" ? "g=" + giorno : "d=" + giorno);
+const qs = () => "d=" + (typeof giorno === "number" ? etGiorno(giorno).ymd : giorno);
 const dati = (force) => { if (force) delete cache["/api/giorno?" + qs()]; return api("/api/giorno?" + qs(), 40000); };
 
 // ---------- pezzi grafici
@@ -48,7 +48,7 @@ function topBar(D) {
   return `<div class="top"><img class="logo" src="/icon-192.png" alt=""><div><div class="nome">NBA Schedine</div><div class="s">Studio e consigli sul basket${ora ? " · agg. " + ora : ""}</div></div></div>`;
 }
 const GS = ["DOM", "LUN", "MAR", "MER", "GIO", "VEN", "SAB"], MESI = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
-const fmtET = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+const fmtET = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome", year: "numeric", month: "2-digit", day: "2-digit" });
 function etGiorno(off) {
   const [y, m, d] = fmtET.format(new Date(Date.now() + off * 86400000)).split("-").map(Number);
   return { ymd: `${y}${String(m).padStart(2, "0")}${String(d).padStart(2, "0")}`, y, m, d, dow: new Date(Date.UTC(y, m - 1, d)).getUTCDay() };
