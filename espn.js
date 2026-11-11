@@ -89,13 +89,18 @@ export async function caricaInfortuni() {
   return out;
 }
 
-export async function caricaGiorno(offset) {
-  const par = offset === 0 ? {} : { dates: dataUS(offset) };
+export function aggiungiGiorni(yyyymmdd, n) {
+  const d = new Date(Date.UTC(+yyyymmdd.slice(0, 4), +yyyymmdd.slice(4, 6) - 1, +yyyymmdd.slice(6, 8)) + n * 86400000);
+  return d.toISOString().slice(0, 10).replaceAll("-", "");
+}
+
+export async function caricaGiorno(offset, data = null) {
+  const par = data ? { dates: data } : offset === 0 ? {} : { dates: dataUS(offset) };
   const sb = await get(`${ESPN}/scoreboard`, par, 60);
   const base = leggiScoreboard(sb);
   let ieri = [];
   try {
-    const dIeri = offset === 0 ? dataUS(-1) : dataUS(offset - 1);
+    const dIeri = data ? aggiungiGiorni(data, -1) : offset === 0 ? dataUS(-1) : dataUS(offset - 1);
     ieri = leggiScoreboard(await get(`${ESPN}/scoreboard`, { dates: dIeri }, 120)).partite.filter((p) => p.stato === "post");
   } catch {}
   return { ...base, ieri };
