@@ -18,6 +18,7 @@ async function db(env, metodo, { params, corpo, prefer, tabella = "nba_consigli"
   const t = await r.text(); return t ? JSON.parse(t) : [];
 }
 
+const chiaveGiocata = (x) => `${x.g}|${x.tipo}|${x.pid || x.squadra || (x.tipo === "Totale" ? x.testo : "")}`;
 function costruisci(partite, teams, players, infortuni, b2b, forma = {}, quote = null, linee = {}) {
   const out = [];
   for (const p of partite) {
@@ -207,8 +208,14 @@ async function apiGiorno(env, ctx, offset, data = null) {
     for (const x of picks) {
       const gara = gare.find((q) => q.id === x.g);
       if (!gara || gara.stato !== "pre") continue;
-      const chiave = `${x.g}|${x.tipo}|${x.pid || x.squadra || ""}`;
+      const chiave = chiaveGiocata(x);
       righe[chiave] = { chiave, event_id: x.g, data: GIORNO, partita: x.partita, tipo: x.tipo, testo: x.testo, squadra: x.squadra, prob: x.prob, stima: String(x.stima) };
+    }
+    // schedine proposte: salvate per vedere nel tempo quante vengono centrate
+    const dayYMD = data || romaYMD(Date.now() + offset * 86400000);
+    for (const s of proposte(picks, gare)) {
+      const chiave = `sch|${dayYMD}|${s.id}`;
+      righe[chiave] = { chiave, event_id: s.legs[0].g, data: GIORNO, partita: s.nome, tipo: "Schedina", testo: `${s.nome}: ` + s.legs.map((l) => l.testo).join(" + "), squadra: s.id, prob: s.prob, stima: JSON.stringify(s.legs.map((l) => chiaveGiocata(l))) };
     }
     const lista = Object.values(righe);
     registro = `${lista.length} consigli da salvare`;
@@ -243,7 +250,8 @@ async function apiEsiti(offset, data = null) {
 
 async function apiStorico(env) {
   if (!dbOk(env)) return { attivo: false, righe: [] };
-  const righe = await db(env, "GET", { params: { select: "*", order: "creato.desc", limit: "3000" } });
+  const tutte = await db(env, "GET", { params: { select: "*", order: "creato.desc", limit: "3000" } });
+  const righe = tutte.filter((r) => r.tipo !== "Schedina"), schedine = tutte.filter((r) => r.tipo === "Schedina");
   const attesa = righe.filter((r) => r.esito == null);
   if (attesa.length) {
     try {
@@ -266,7 +274,18 @@ async function apiStorico(env) {
       if (agg.length) await db(env, "POST", { params: { on_conflict: "chiave" }, corpo: agg, prefer: "resolution=merge-duplicates" });
     } catch {}
   }
-  return { attivo: true, righe };
+  // schedine: centrata solo se tutte le giocate sono centrate; persa appena una è sbagliata
+  const perChiave = new Map(righe.map((r) => [r.chiave, r])), aggS = [];
+  for (const s of schedine) {
+    if (s.esito != null) continue;
+    let chiavi = []; try { chiavi = JSON.parse(s.stima || "[]"); } catch {}
+    const esiti = chiavi.map((k) => (perChiave.get(k) || {}).esito);
+    let e = null;
+    if (esiti.includes(0)) e = 0; else if (esiti.length && esiti.every((x) => x === 1)) e = 1; else if (esiti.includes(2) && !esiti.includes(null) && !esiti.includes(undefined)) e = 2;
+    if (e != null) { s.esito = e; s.dettaglio = `${esiti.filter((x) => x === 1).length} su ${esiti.length} giocate centrate`; aggS.push({ chiave: s.chiave, esito: e, dettaglio: s.dettaglio }); }
+  }
+  if (aggS.length) { try { await db(env, "POST", { params: { on_conflict: "chiave" }, corpo: aggS, prefer: "resolution=merge-duplicates" }); } catch {} }
+  return { attivo: true, righe, schedine };
 }
 
 

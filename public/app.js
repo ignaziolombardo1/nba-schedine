@@ -168,6 +168,30 @@ async function vistaPartite(force) {
   seguiPunteggi(D);
 }
 
+// ---------- GIOCATORE
+async function vistaGiocatore(pid) {
+  const back = `<a class="back" href="javascript:history.back()"><i class="ti ti-chevron-left"></i>Indietro</a>`;
+  APP.innerHTML = back + skel();
+  let D; try { D = await dati(false); } catch (e) { APP.innerHTML = back + errBox(e); return; }
+  let x = null, p = null;
+  for (const g of D.partite) { const f = g.giocatori.find((q) => String(q.pid) === String(pid)); if (f) { x = f; p = g; break; } }
+  if (!x) { APP.innerHTML = back + `<div class="vuoto">Giocatore non trovato per il giorno selezionato.</div>`; return; }
+  const avv = x.sq === p.casa ? p.trasf : p.casa, dub = x.inf === "dubbio" ? `<span class="pill" style="color:${AM};margin-left:6px">Dubbio</span>` : "";
+  let h = back + `<div class="card gm" style="--ca:${T(D, x.sq).c};--cb:transparent"><div class="lg">${foto(x.pid, 64)}<div style="min-width:0"><div class="nome" style="font-size:26px">${esc(x.nome)}${dub}</div><div class="s">${logo(x.sq, 16)} ${esc(T(D, x.sq).n)} · contro ${esc(T(D, avv).b)} · ${esc(p.ora)}</div><div class="s">${Math.round(x.min)} minuti attesi${x.conForma ? " · con forma recente" : " · solo media stagione"}</div></div></div>${x.assenze ? `<div class="s" style="margin-top:8px;color:${AM}">Assenti in squadra: ${esc(x.assenze.join(", "))}. Una parte dei loro numeri passa a questo giocatore.</div>` : ""}</div>`;
+  for (const [m, c] of Object.entries(MERC)) {
+    const o = x[c.k], u = x.ult && x.ult[c.k];
+    h += `<h2>${m}</h2><div class="card"><div class="row3"><div class="tile on"><b>${o.v.toFixed(1)}</b><span>stima per questa partita</span></div><div class="tile"><b>${o.media.toFixed(1)}</b><span>media stagione</span></div><div class="tile"><b>${u ? (u.reduce((a, b) => a + b, 0) / u.length).toFixed(1) : "–"}</b><span>ultime ${u ? u.length : 0}</span></div></div>`;
+    if (u) {
+      const sg = o.rec != null ? o.rec : o.lad.length ? o.lad[Math.floor(o.lad.length / 2)][0] : null, su = sg != null ? u.filter((v) => v > sg).length : null;
+      h += `<div style="margin-top:12px"><div class="riga s"><span>ULTIME ${u.length} GARE (vecchia → recente)</span>${sg != null ? `<span>soglia ${sg}: superata ${su} volte su ${u.length}</span>` : ""}</div>${spark(u, sg, MU)}</div>`;
+    } else h += `<div class="s" style="margin-top:10px">Ultime partite non ancora disponibili.</div>`;
+    h += o.rec != null ? `<div style="margin-top:10px"><span class="s">CONSIGLIATO</span><div style="font-weight:600;color:${GR}">over ${o.rec} ${c.u} · ${pct(o.lad.find((q) => q[0] === o.rec)[1])}</div></div>` : `<div class="s" style="margin-top:10px">Nessuna soglia sopra il 70%.</div>`;
+    h += `<div class="lad">${o.lad.map(([t, pr]) => `<span style="color:${pr >= 0.7 ? GR : pr >= 0.5 ? AM : MU}">over ${t} · ${pct(pr)}</span>`).join("")}</div></div>`;
+  }
+  h += `<a class="btn" style="display:block;text-align:center" href="#/partita/${p.id}">Apri la partita</a>`;
+  APP.innerHTML = h;
+}
+
 // ---------- SCHEDINE
 const TONI = { ok: [GR, "ti-shield-check"], mid: [OR, "ti-scale"], alta: [RD, "ti-flame"] };
 function testoSchedina(s) { return `${s.nome} (${s.legs.length} giocate, probabilità unita ${pct(s.prob)})\n` + s.legs.map((l) => `• ${l.testo} (${l.partita}) ${pct(l.prob)}`).join("\n"); }
@@ -328,7 +352,7 @@ function schedaGiocatore(D, gid, x, mer, c) {
   const rec = o.rec != null ? `<div style="margin-top:10px"><span class="s">CONSIGLIATO</span><div style="font-weight:600;color:${GR}">over ${o.rec} ${c.u} · ${pct(o.lad.find((q) => q[0] === o.rec)[1])}</div></div>` : `<div class="s" style="margin-top:10px">Nessuna soglia sopra il 70%: giocatore poco sicuro.</div>`;
   const lad = o.lad.map(([t, pr]) => { const col = pr >= 0.7 ? GR : pr >= 0.5 ? AM : MU; return `<span style="color:${col};${t === o.rec ? "border:1px solid " + col : ""}">over ${t} · ${pct(pr)}</span>`; }).join("");
   const key = `${gid}_${x.pid || x.nome}_${mer}`;
-  return `<div class="card pl"><div class="lg">${foto(x.pid, 48)}<div style="min-width:0"><div class="tn">${esc(x.nome)}${dub}</div><div class="s">${esc(x.sq)} · ${Math.round(x.min)} min attesi</div></div></div>
+  return `<div class="card pl"><div class="lg">${foto(x.pid, 48)}<div style="min-width:0"><div class="tn">${x.pid ? `<a href="#/giocatore/${esc(x.pid)}" style="border-bottom:1px dotted #5a6378">${esc(x.nome)}</a>` : esc(x.nome)}${dub}</div><div class="s">${esc(x.sq)} · ${Math.round(x.min)} min attesi</div>${x.assenze && x.boost && x.boost[c.k] >= 0.3 ? `<div class="s" style="color:${AM}">+${x.boost[c.k].toFixed(1)} ${c.u} per l'assenza di ${esc(x.assenze.join(", "))}</div>` : ""}</div></div>
   <div class="row3">${tile("Punti", x.pts.v, mer === "Punti")}${tile("Rimbalzi", x.reb.v, mer === "Rimbalzi")}${tile("Assist", x.ast.v, mer === "Assist")}</div>${rec}${quoteGioc(o, c)}${formaHtml(x, mer, c, o)}
   <div class="s" style="margin-top:8px">ALTRE SOGLIE POSSIBILI</div><div class="lad">${lad}</div>
   <input class="linea" inputmode="decimal" placeholder="Tua linea ${mer.toLowerCase()} (es. ${(Math.round(o.v * 2) / 2)})" data-lk="${esc(key)}" data-v="${o.v}" data-sd="${o.sd}" value="${esc(ls.get("L_" + key, ""))}"><div class="s" data-lp="${esc(key)}"></div></div>`;
@@ -367,17 +391,43 @@ function rigaLive(x) {
   const delta = x.pLive - x.prob, fr = delta >= 0 ? "ti-arrow-up-right" : "ti-arrow-down-right";
   return `<div class="card riga" style="padding:10px 12px;gap:10px"><div style="min-width:0;flex:1"><div style="font-weight:500">${esc(x.testo)}</div><div class="s">${esc(x.tipo)} · ora ${esc(x.adesso)}</div><div class="s">Prima ${pct(x.prob)} <i class="ti ${fr}" style="color:${delta >= 0 ? GR : RD}"></i></div></div><div style="text-align:right"><div style="font-size:20px;font-weight:600;color:${col}">${pct(x.pLive)}</div><div class="s">${hit ? "Centrata" : x.pLive < 0.15 ? "Difficile" : "In corso"}</div></div></div>`;
 }
+const storiaLive = {}, eventiLive = [], statoGiocate = {};
+function aggiornaStoriaLive(D) {
+  for (const p of D.partite) {
+    const a = (storiaLive[p.id] ||= []), ult = a[a.length - 1];
+    if (!ult || ult.f !== p.f) a.push({ f: p.f, p: p.pwLive });
+    for (const q of p.picks || []) {
+      const k = p.id + "|" + (q.id || q.testo), prima = statoGiocate[k];
+      const ora = q.pLive >= 0.995 ? "ok" : q.pLive <= 0.03 ? "no" : "in";
+      if (prima && prima !== ora && ora !== "in") eventiLive.push({ t: Date.now(), ok: ora === "ok", testo: q.testo, partita: `${p.trasf} @ ${p.casa}` });
+      statoGiocate[k] = ora;
+    }
+  }
+  while (eventiLive.length > 20) eventiLive.shift();
+}
+function grafLive(p) {
+  const a = storiaLive[p.id] || []; if (a.length < 2) return "";
+  const w = 300, h = 70, X = (f) => (f * w).toFixed(1), Y = (v) => ((1 - v) * (h - 6) + 3).toFixed(1);
+  const pts = a.map((q) => `${X(q.f)},${Y(q.p)}`).join(" ");
+  const ca = T({ squadre: {} }, p.casa).c;
+  return `<div class="card" style="padding:10px 12px"><div class="riga s"><span>Probabilità di vittoria di ${esc(p.casa)} nel tempo</span><b style="color:#e8eaf0">${pct(p.pwLive)}</b></div><svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" style="margin-top:6px"><line x1="0" x2="${w}" y1="${Y(0.5)}" y2="${Y(0.5)}" stroke="#2a3040" stroke-dasharray="4 4"/><polyline points="${pts}" fill="none" stroke="${OR}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/></svg></div>`;
+}
+function novitaLive() {
+  const l = eventiLive.filter((e) => Date.now() - e.t < 15 * 60000).slice(-4).reverse(); if (!l.length) return "";
+  return `<div class="sub">Appena successo</div>` + l.map((e) => `<div class="card riga" style="padding:9px 12px;border-left:3px solid ${e.ok ? GR : RD}"><div style="min-width:0"><div style="font-weight:600">${esc(e.testo)}</div><div class="s">${esc(e.partita)}</div></div><b style="color:${e.ok ? GR : RD}">${e.ok ? "Centrata" : "Persa"}</b></div>`).join("");
+}
 async function vistaLive(primo = true) {
   if (primo) APP.innerHTML = topBar() + skel();
   let D; try { D = await api("/api/live", 3000); } catch (e) { if (primo) APP.innerHTML = topBar() + errBox(e); timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000); return; }
   if (!location.hash.startsWith("#/live")) return;
-  let h = topBar(D) + `<div class="cap" style="margin-top:0">Si aggiorna da solo ogni 6 secondi (ESPN pubblica i dati ogni 10-20 secondi circa). Le probabilità tengono conto di punteggio, tempo rimasto e minuti giocati.</div>`;
+  aggiornaStoriaLive(D);
+  let h = topBar(D) + novitaLive() + `<div class="cap" style="margin-top:0">Si aggiorna da solo ogni 6 secondi (ESPN pubblica i dati ogni 10-20 secondi circa). Le probabilità tengono conto di punteggio, tempo rimasto e minuti giocati.</div>`;
   if (!D.partite.length) {
     h += `<div class="vuoto"><b>Nessuna partita in corso.</b><br>Oggi: ${D.totali} partite, ${D.finite} finite.</div>`;
     if (D.prossime.length) h += `<h2>Prossime partite</h2>` + D.prossime.map((q) => `<a class="card riga" href="#/partita/${q.id}"><div class="lg">${logo(q.trasf, 28)}<b>${esc(q.trasf)}</b><span class="s">@</span>${logo(q.casa, 28)}<b>${esc(q.casa)}</b></div><span class="s">${esc(q.ora)}</span></a>`).join("");
   }
   for (const p of D.partite) {
-    h += schedaLive(D, p);
+    h += schedaLive(D, p) + grafLive(p);
     if (p.segnali && p.segnali.length) h += `<div class="sub"><span class="pill" style="color:${OR}"><span class="dot"></span>Segnali live</span> <span class="s">nati durante la partita</span></div>` + p.segnali.map(rigaSegnale).join("");
     const picks = [...p.picks].sort((a, b) => (a.pLive >= 0.995) - (b.pLive >= 0.995) || b.pLive - a.pLive);
     if (picks.length) h += `<div class="sub">Giocate di questa partita</div>` + picks.map(rigaLive).join("");
@@ -395,6 +445,16 @@ async function vistaLive(primo = true) {
 
 // ---------- ESITI e STORICO
 function barraPerc(t, k, n, att) { const p = n ? k / n * 100 : 0; return `<div class="card pc"><div class="s">${esc(t)}</div><b>${k}/${n}</b> <span class="s">(${p.toFixed(0)}%${att != null ? " · previsto " + pct(att) : ""})</span><div class="mini"><i style="width:${p.toFixed(0)}%;background:${p >= 60 ? GR : RD}"></i></div></div>`; }
+function schedineStorico(S) {
+  const l = (S.schedine || []); if (!l.length) return "";
+  const ris = l.filter((r) => r.esito === 0 || r.esito === 1), att = l.length - ris.length;
+  const per = {}; for (const r of ris) { const c = (per[r.squadra] ||= { n: 0, ok: 0, pr: 0, nome: String(r.partita || r.squadra) }); c.n++; c.ok += r.esito; c.pr += r.prob; }
+  let h = `<h2>Schedine proposte</h2>`;
+  if (!ris.length) return h + `<div class="vuoto">Salvate ${l.length} schedine, ${att} in attesa che le partite finiscano. Qui vedrai quante ne vengono centrate.</div>`;
+  h += `<div class="grid2">` + Object.values(per).map((c) => barraPerc(c.nome, c.ok, c.n, c.pr / c.n)).join("") + `</div>`;
+  h += ris.slice(0, 8).map((r) => `<div class="card riga" style="padding:9px 12px;gap:10px"><div style="min-width:0"><div style="font-weight:500">${esc(r.partita)} · ${esc(r.data)}</div><div class="s">${esc(r.dettaglio || "")} · prevista ${pct(r.prob)}</div></div><b style="color:${r.esito === 1 ? GR : RD}">${r.esito === 1 ? "Centrata" : "Sbagliata"}</b></div>`).join("");
+  return h;
+}
 function rigaEsito(r) {
   const [s, c] = { 1: ["✓", GR], 0: ["✗", RD], 2: ["–", MU] }[r.esito];
   return `<div class="card riga" style="padding:10px 12px;gap:10px;justify-content:flex-start"><div style="width:28px;height:28px;border-radius:50%;background:${c}22;color:${c};display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">${s}</div><div style="min-width:0;flex:1"><div style="font-weight:500">${esc(r.testo)}</div><div class="s">${esc(r.partita)} · ${esc(r.dettaglio || "")}</div></div><div class="s">${pct(r.prob)}</div></div>`;
@@ -433,6 +493,7 @@ async function vistaStorico() {
       h += `<h2>Ultimi esiti</h2>` + val.slice(0, 30).map(rigaEsito).join("");
     }
   }
+  h += schedineStorico(S);
   h += `<div class="cap" style="text-align:center;margin-top:18px"><a href="#/diag" style="color:${OR}"><i class="ti ti-stethoscope"></i> Controllo dei dati</a></div>`;
   APP.innerHTML = h;
 }
@@ -454,8 +515,9 @@ function route(force) {
   const hsh = location.hash.replace(/^#/, "") || "/";
   const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") ? "partite" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
-  const m = /^\/partita\/(\d+)/.exec(hsh);
-  if (m) vistaStudio(m[1], force === true);
+  const m = /^\/partita\/(\d+)/.exec(hsh), gp = /^\/giocatore\/(\d+)/.exec(hsh);
+  if (gp) vistaGiocatore(gp[1]);
+  else if (m) vistaStudio(m[1], force === true);
   else if (attivo === "live") vistaLive(true);
   else if (attivo === "schedine") vistaSchedine(force === true);
   else if (hsh.startsWith("/combo")) vistaCombo(force === true);
@@ -463,7 +525,7 @@ function route(force) {
   else if (hsh.startsWith("/diag")) vistaDiag();
   else if (attivo === "storico") vistaStorico();
   else vistaPartite(force === true);
-  if (!m) window.scrollTo(0, 0);
+  if (!m && !gp) window.scrollTo(0, 0);
 }
 window.route = route;
 window.addEventListener("hashchange", () => route());

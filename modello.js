@@ -57,6 +57,12 @@ export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}, form
   const lega = Object.values(teams).reduce((a, t) => a + t.pa, 0) / Object.keys(teams).length;
   const fDif = teams[avv].pa / lega;
   const media = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  // assenti (out) della squadra: una parte dei loro punti, rimbalzi e assist passa ai compagni, in proporzione al loro peso
+  const stOut = (p) => (infortuni[p.nome.trim().toLowerCase()] || {}).stato === "out";
+  const sqPl = players.filter((p) => p.sq === sig && p.min >= MIN_MINUTI);
+  const usciti = sqPl.filter(stOut), sani = sqPl.filter((p) => !stOut(p));
+  const persi = { pts: usciti.reduce((a, p) => a + p.pts, 0), reb: usciti.reduce((a, p) => a + p.reb, 0), ast: usciti.reduce((a, p) => a + p.ast, 0) };
+  const somma = { pts: sani.reduce((a, p) => a + p.pts, 0) || 1, reb: sani.reduce((a, p) => a + p.reb, 0) || 1, ast: sani.reduce((a, p) => a + p.ast, 0) || 1 };
   return players
     .filter((p) => p.sq === sig && p.min >= MIN_MINUTI && (infortuni[p.nome.trim().toLowerCase()] || {}).stato !== "out")
     .map((p) => {
@@ -69,7 +75,11 @@ export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}, form
       const minAtt = p.min >= 26 ? min0 * (1 - Math.min(0.10, 0.008 * blow)) : min0;
       const tasso = (v10, vSt) => (l10 ? PESO_FORMA * (v10 / Math.max(l10.min, 1)) + (1 - PESO_FORMA) * (vSt / p.min) : vSt / p.min);
       const val = { Punti: tasso(l10 && l10.pts, p.pts) * minAtt * fDif, Rimbalzi: tasso(l10 && l10.reb, p.reb) * minAtt, Assist: tasso(l10 && l10.ast, p.ast) * minAtt };
-      const o = { nome: p.nome, pid: p.pid, sq: sig, min: r1(minAtt), inf, forma: r1(l10 ? l10.pts : p.pts), stagione: r1(p.pts), conForma: !!l10,
+      // più la forma recente già riflette l'assenza, meno si aggiunge
+      const rid = l10 ? 0.25 : 0.45, bo = (k) => (usciti.length ? Math.min(0.2 * p[k], rid * persi[k] * p[k] / somma[k]) : 0);
+      const boost = { pts: bo("pts"), reb: bo("reb"), ast: bo("ast") };
+      val.Punti += boost.pts; val.Rimbalzi += boost.reb; val.Assist += boost.ast;
+      const o = { nome: p.nome, pid: p.pid, sq: sig, min: r1(minAtt), assenze: usciti.length ? usciti.slice(0, 3).map((u) => u.nome) : null, boost: usciti.length ? { pts: r1(boost.pts), reb: r1(boost.reb), ast: r1(boost.ast) } : null, inf, forma: r1(l10 ? l10.pts : p.pts), stagione: r1(p.pts), conForma: !!l10,
         ult: ok ? { pts: [...f.pts].reverse(), reb: [...f.reb].reverse(), ast: [...f.ast].reverse() } : null };
       for (const [m, c] of Object.entries(MERCATI)) {
         const q = props && props[`${normNome(p.nome)}|${c.k}`];
