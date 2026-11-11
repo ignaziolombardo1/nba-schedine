@@ -128,3 +128,8 @@ h2{display:flex;align-items:center;gap:10px}
 h2::before{content:"";width:4px;height:18px;border-radius:2px;background:linear-gradient(180deg,var(--or),#ff5d2a)}
 .card:active{filter:brightness(1.08)}
 @supports not (background:color-mix(in srgb,red 20%,transparent)){.gm{background:linear-gradient(180deg,#151a26,#10141e)}}
+
+.avv{display:flex;gap:8px;align-items:flex-start;padding:9px 12px;margin:0 0 8px;border-radius:12px;font-size:12px;line-height:1.4;background:#171c29;border:1px solid #2a3040;color:#cfd4df}
+.avv.warn{background:#2a2112;border-color:#5a4316;color:#ffd9a0}
+.avv.err{background:#2a1417;border-color:#5a2128;color:#ffb3b3}
+.avv i{margin-top:1px}

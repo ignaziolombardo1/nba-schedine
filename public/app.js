@@ -16,6 +16,9 @@ const pct = (p) => Math.round(p * 100) + "%";
 // ---------- dati
 let giorno = ls.get("giorno", 0);
 if (typeof giorno !== "number" && !/^\d{8}$/.test(String(giorno))) giorno = 0;
+const IMP0 = { soglia: 0.70, mercati: { Punti: true, Rimbalzi: true, Assist: true, Totale: true, Squadra: true, Vincente: true }, puntata: 5 };
+const impo = () => { const i = ls.get("imp", {}); return { ...IMP0, ...i, mercati: { ...IMP0.mercati, ...(i.mercati || {}) } }; };
+function applicaImp(D) { const i = impo(); if (!D || !D.picks) return D; return { ...D, picks: D.picks.filter((x) => x.prob >= i.soglia && i.mercati[x.tipo] !== false) }; }
 const cache = {};
 function salvaLocale(k, d) {
   const val = JSON.stringify({ t: Date.now(), d });
@@ -33,7 +36,7 @@ async function api(path, ttl = 0) {
   return d;
 }
 const qs = () => "d=" + (typeof giorno === "number" ? etGiorno(giorno).ymd : giorno);
-const dati = (force) => { if (force) delete cache["/api/giorno?" + qs()]; return api("/api/giorno?" + qs(), 40000); };
+const dati = async (force) => { if (force) delete cache["/api/giorno?" + qs()]; return applicaImp(await api("/api/giorno?" + qs(), 40000)); };
 
 // ---------- pezzi grafici
 const T = (D, ab) => (D.squadre && D.squadre[ab]) || { n: ab, b: ab, c: "#4a5060" };
@@ -125,6 +128,14 @@ function migliori(D) {
 }
 
 // ---------- PARTITE
+function avvisiDati(D, daCache) {
+  let h = "";
+  const eta = D.aggiornato ? Math.round((Date.now() - Date.parse(D.aggiornato)) / 60000) : null;
+  if (daCache) h += `<div class="avv"><i class="ti ti-refresh"></i> Dati salvati sul telefono${eta != null ? " (di " + (eta < 60 ? eta + " minuti" : Math.round(eta / 60) + " ore") + " fa)" : ""}: aggiorno…</div>`;
+  else if (eta != null && eta > 15) h += `<div class="avv warn"><i class="ti ti-clock-exclamation"></i> Ultimo aggiornamento ${eta < 60 ? eta + " minuti" : Math.round(eta / 60) + " ore"} fa: l'app non è riuscita a ricaricare. Tocca «Aggiorna ora» in fondo.</div>`;
+  for (const x of D.salute || []) h += `<div class="avv ${x.liv === "err" ? "err" : "warn"}"><i class="ti ti-alert-triangle"></i> ${esc(x.t)} <a href="#/diag" style="text-decoration:underline">Dettagli</a></div>`;
+  return h;
+}
 function hero(D) {
   const n = D.partite.length; if (!n) return "";
   const live = D.partite.filter((p) => p.stato === "in").length, fin = D.partite.filter((p) => p.stato === "post").length, pre = n - live - fin;
@@ -158,15 +169,15 @@ function seguiPunteggi(D) {
 async function vistaPartite(force) {
   // mostra subito l'ultimo giorno salvato sul telefono, poi lo aggiorna
   const salvato = force ? null : cacheLocale("/api/giorno?" + qs());
-  if (salvato) disegnaPartite(salvato, false); else { APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni(); }
+  if (salvato) disegnaPartite(applicaImp(salvato), false, true); else { APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni(); }
   let D; try { D = await dati(force); } catch (e) { if (!salvato) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); } return; }
   if (!location.hash.replace(/^#/, "").replace(/^\//, "")) { const y = window.scrollY; disegnaPartite(D, true); if (salvato) window.scrollTo(0, y); }
 }
-function disegnaPartite(D, conPoll) {
+function disegnaPartite(D, conPoll, daCache) {
   const top = (id) => D.picks.find((x) => x.g === id);
   let h = topBar(D) + giorniChips();
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
-  if (D.partite.length && !D.partite.some((p) => p.giocatori && p.giocatori.length)) h += `<div class="card" style="border-color:${RD}"><b style="color:${RD}">Giocatori non disponibili</b><div class="s" style="margin-top:4px">${esc((D.diag || []).filter((x) => /giocatori/.test(x)).join(" · ") || "ESPN non ha restituito le statistiche dei giocatori.")}</div></div>`;
+  h += avvisiDati(D, daCache);
   h += hero(D);
   h += migliori(D);
   h += confrontoMercato(D);
@@ -178,6 +189,23 @@ function disegnaPartite(D, conPoll) {
   h += `<button class="btn" id="agg"><i class="ti ti-refresh"></i> Aggiorna ora</button>`;
   APP.innerHTML = h; bindGiorni(); $("#agg").onclick = () => route(true);
   if (conPoll) seguiPunteggi(D);
+}
+
+// ---------- IMPOSTAZIONI (salvate sul telefono)
+function vistaImpostazioni() {
+  const i = impo();
+  const back = `<a class="back" href="#/storico"><i class="ti ti-chevron-left"></i>Storico</a>`;
+  let h = back + `<h2>Impostazioni</h2><div class="cap" style="margin-top:0">Valgono solo su questo telefono. Cambiano le giocate che vedi nelle pagine Partite, Studio e Combo; le proposte di schedina usano soglie proprie.</div>`;
+  h += `<div class="card"><div class="sub" style="margin-top:0">Probabilità minima delle giocate</div><div class="tabs">${[0.70, 0.75, 0.80, 0.85].map((v) => `<button class="chipbtn${i.soglia === v ? " on" : ""}" data-sg="${v}">${Math.round(v * 100)}%</button>`).join("")}</div></div>`;
+  h += `<div class="card"><div class="sub" style="margin-top:0">Quali giocate vedere</div>${Object.keys(IMP0.mercati).map((m) => `<label class="sw"><input type="checkbox" data-mk="${m}" ${i.mercati[m] !== false ? "checked" : ""}> ${esc({ Vincente: "Squadra vincente", Squadra: "Punti di una squadra", Totale: "Totale della partita" }[m] || m)}</label>`).join("")}</div>`;
+  h += `<div class="card"><div class="sub" style="margin-top:0">Puntata predefinita nel registro (€)</div><input class="linea" inputmode="decimal" id="pun" value="${i.puntata}" style="margin-top:0"></div>`;
+  h += `<button class="btn" id="ripr">Ripristina le impostazioni iniziali</button>`;
+  APP.innerHTML = h;
+  const salva = (m) => { ls.set("imp", { ...impo(), ...m }); };
+  APP.querySelectorAll("[data-sg]").forEach((b) => b.onclick = () => { salva({ soglia: +b.dataset.sg }); vistaImpostazioni(); });
+  APP.querySelectorAll("[data-mk]").forEach((c) => c.onchange = () => { const mk = { ...impo().mercati, [c.dataset.mk]: c.checked }; salva({ mercati: mk }); });
+  $("#pun").oninput = (e) => { const v = parseFloat(String(e.target.value).replace(",", ".")); if (v > 0) salva({ puntata: v }); };
+  $("#ripr").onclick = () => { ls.set("imp", {}); vistaImpostazioni(); };
 }
 
 // ---------- REGISTRO PERSONALE (salvato sul telefono)
@@ -192,7 +220,7 @@ function bindRegistro() {
     const o = JSON.parse(b.dataset.reg), f = b.nextElementSibling;
     if (ls.get("registro", []).some((r) => r.id === o.id)) { location.hash = "#/registro"; return; }
     f.style.display = "block";
-    f.innerHTML = `<div class="grid2"><input class="linea" inputmode="decimal" placeholder="Quota (es. 2.10)" data-q><input class="linea" inputmode="decimal" placeholder="Puntata in € (es. 5)" data-p></div><button class="btn" data-ok style="margin:0 0 6px">Salva nel registro</button>`;
+    f.innerHTML = `<div class="grid2"><input class="linea" inputmode="decimal" placeholder="Quota (es. 2.10)" data-q><input class="linea" inputmode="decimal" placeholder="Puntata in € (es. 5)" data-p value="${impo().puntata}"></div><button class="btn" data-ok style="margin:0 0 6px">Salva nel registro</button>`;
     f.querySelector("[data-ok]").onclick = () => {
       const q = parseFloat(String(f.querySelector("[data-q]").value).replace(",", ".")), p = parseFloat(String(f.querySelector("[data-p]").value).replace(",", "."));
       if (!(q > 1) || !(p > 0)) { f.querySelector("[data-ok]").textContent = "Inserisci quota (maggiore di 1) e puntata"; return; }
@@ -559,7 +587,7 @@ async function vistaStorico() {
     }
   }
   h += precisioneModello(S) + schedineStorico(S);
-  h += `<div class="cap" style="text-align:center;margin-top:14px"><a href="#/registro" style="color:${OR}"><i class="ti ti-notebook"></i> Il mio registro (quote e puntate)</a></div>`;
+  h += `<div class="cap" style="text-align:center;margin-top:14px"><a href="#/registro" style="color:${OR}"><i class="ti ti-notebook"></i> Il mio registro (quote e puntate)</a> &nbsp;·&nbsp; <a href="#/impostazioni" style="color:${OR}"><i class="ti ti-settings"></i> Impostazioni</a></div>`;
   h += `<div class="cap" style="text-align:center;margin-top:18px"><a href="#/diag" style="color:${OR}"><i class="ti ti-stethoscope"></i> Controllo dei dati</a></div>`;
   APP.innerHTML = h;
 }
@@ -579,10 +607,11 @@ let timer = null;
 function route(force) {
   clearTimeout(timer);
   const hsh = location.hash.replace(/^#/, "") || "/";
-  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") ? "partite" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") ? "storico" : "partite";
+  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") ? "partite" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") || hsh.startsWith("/impostazioni") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const m = /^\/partita\/(\d+)/.exec(hsh), gp = /^\/giocatore\/(\d+)/.exec(hsh);
-  if (hsh.startsWith("/registro")) vistaRegistro();
+  if (hsh.startsWith("/impostazioni")) vistaImpostazioni();
+  else if (hsh.startsWith("/registro")) vistaRegistro();
   else if (gp) vistaGiocatore(gp[1]);
   else if (m) vistaStudio(m[1], force === true);
   else if (attivo === "live") vistaLive(true);

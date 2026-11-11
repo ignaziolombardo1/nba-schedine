@@ -3,7 +3,8 @@ import { proiettaPartita, proiettaGiocatori, consigli, proposte, valuta, phi, ST
 import { aggiornaQuote, chiaveGara } from "./quote.js";
 import { romaYMD, caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, testaATesta, caricaGamelog, dataUS, get } from "./espn.js";
 
-const J = (o, ttl = 0) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": ttl ? `public, max-age=${ttl}` : "no-store", "access-control-allow-origin": "*" } });
+const arr = (k, v) => (typeof v === "number" && !Number.isInteger(v) ? Math.round(v * 1000) / 1000 : v);
+const J = (o, ttl = 0) => new Response(JSON.stringify(o, arr), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": ttl ? `public, max-age=${ttl}` : "no-store", "access-control-allow-origin": "*" } });
 const ERR = (m, s = 500) => new Response(JSON.stringify({ errore: m }), { status: s, headers: { "content-type": "application/json" } });
 
 // ---- Supabase (secrets SUPABASE_URL e SUPABASE_KEY)
@@ -253,9 +254,19 @@ async function apiGiorno(env, ctx, offset, data = null) {
     registro = `${lista.length} consigli da salvare`;
     if (lista.length) ctx.waitUntil(db(env, "POST", { params: { on_conflict: "chiave" }, corpo: lista, prefer: "resolution=ignore-duplicates" }).catch(() => {}));
   }
+  // segnali di salute dei dati, mostrati nell'app
+  const salute = [];
+  if (!stat.players.length) salute.push({ liv: "err", t: "Statistiche dei giocatori non disponibili: mancano giocatori e giocate sui giocatori." });
+  if (errori.some((e) => e.startsWith("infortuni"))) salute.push({ liv: "warn", t: "Infortuni non disponibili: controlla gli assenti prima di giocare." });
+  if (dbOk(env)) {
+    if (stat.players.length && !fm.n) salute.push({ liv: "warn", t: "Forma recente dei giocatori non ancora caricata: le stime usano la media stagione." });
+    else if (fm.stato && fm.stato.ultimo && Date.now() - Date.parse(fm.stato.ultimo) > 5 * 3600e3) salute.push({ liv: "warn", t: "Forma recente dei giocatori non aggiornata da più di 5 ore." });
+    if (fm.errore) salute.push({ liv: "warn", t: "Database non raggiungibile: Storico e forma potrebbero mancare." });
+  } else salute.push({ liv: "warn", t: "Database Supabase non collegato: Storico e forma recente non attivi." });
   const sq = {}; sigle.forEach((s) => { sq[s] = info(s); });
   const finiteNome = new Set();
   return { aggiornato: new Date().toISOString(), offset, squadre: sq, linee: g.linee, ieri: g.ieri, b2b,
+    salute,
     schedine: proposte(picks, gare).map((s) => ({ ...s, chiave: `sch|${data || romaYMD(Date.now() + offset * 86400000)}|${s.id}` })), valore: dovePiuDiverso(gare), quote: fm.quote ? { t: fm.quote.t, crediti: fm.quote.crediti, partite: Object.keys(fm.quote.giochi || {}).length } : null,
     partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, iso: x.iso, fs: x.fs, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr,
       r: { ...x.r, pw: phi(x.r.margine / STD.Spread) }, giocatori: x.giocatori, inf: x.inf })),
