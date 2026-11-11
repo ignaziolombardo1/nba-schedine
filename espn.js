@@ -97,12 +97,12 @@ export function aggiungiGiorni(yyyymmdd, n) {
 export const romaYMD = (ms) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms)).replaceAll("-", "");
 
 // Giorno secondo il calendario italiano: una partita appartiene al giorno in cui INIZIA in Italia.
-export async function caricaGiorno(offset, data = null) {
+export async function caricaGiorno(offset, data = null, ttlOra = 60) {
   const D = data || romaYMD(Date.now() + offset * 86400000);
   const Dieri = aggiungiGiorni(D, -1);
   const chiedi = (d, ttl) => get(`${ESPN}/scoreboard`, { dates: d }, ttl).then(leggiScoreboard);
   const [pri, ora, prev] = await Promise.all([
-    chiedi(aggiungiGiorni(D, -1), 60), chiedi(D, 60), chiedi(aggiungiGiorni(D, -2), 300).catch(() => ({ partite: [], linee: {} })),
+    chiedi(aggiungiGiorni(D, -1), ttlOra), chiedi(D, ttlOra), chiedi(aggiungiGiorni(D, -2), 300).catch(() => ({ partite: [], linee: {} })),
   ]);
   const tutte = new Map(), linee = {};
   for (const r of [prev, pri, ora]) {
