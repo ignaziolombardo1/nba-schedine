@@ -62,21 +62,28 @@ export async function caricaStatistiche() {
   }
   if (!Object.keys(teams).length) throw new Error("statistiche squadre non trovate");
   const players = []; let ricevuti = 0, errGioc = null;
-  try {
-    const now = new Date(), stagione = now.getUTCMonth() + 1 >= 10 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
-    const pj = await get(ESPN_ATL, { region: "us", lang: "en", contentorigin: "espn", isqualified: "false", page: 1, limit: 200,
-      sort: "offensive.avgPoints:desc", season: stagione, seasontype: 2 }, 1800);
-    const nomiCol = {}; for (const c of pj.categories || []) nomiCol[c.name] = c.names || [];
-    ricevuti = (pj.athletes || []).length;
-    for (const a of pj.athletes || []) {
-      const v = {};
-      for (const c of a.categories || []) (nomiCol[c.name] || []).forEach((n, i) => { v[n] = (c.values || [])[i]; });
-      const info = a.athlete || {};
-      const ab = nomi["id:" + info.teamId] || nomi[String(info.teamShortName || "").toLowerCase()] || nomi[String(info.teamName || "").toLowerCase()];
-      if (ab && v.avgPoints != null && v.avgMinutes != null)
-        players.push({ nome: info.displayName, pid: String(info.id || ""), sq: ab, min: +v.avgMinutes, pts: +v.avgPoints, reb: +(v.avgRebounds || 0), ast: +(v.avgAssists || 0) });
-    }
-  } catch (e) { errGioc = e.message; }
+  const now = new Date(), stagione = now.getUTCMonth() + 1 >= 10 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+  // prova prima la stagione corrente, poi (se vuota) la precedente; e poi senza ordinamento
+  const tentativi = [{ season: stagione, sort: true }, { season: stagione, sort: false }, { season: stagione - 1, sort: true }];
+  for (const t of tentativi) {
+    if (players.length) break;
+    try {
+      const par = { region: "us", lang: "en", contentorigin: "espn", isqualified: "false", page: 1, limit: 200, season: t.season, seasontype: 2 };
+      if (t.sort) par.sort = "offensive.avgPoints:desc";
+      const pj = await get(ESPN_ATL, par, 1800);
+      const nomiCol = {}; for (const c of pj.categories || []) nomiCol[c.name] = c.names || [];
+      ricevuti = (pj.athletes || []).length;
+      for (const a of pj.athletes || []) {
+        const v = {};
+        for (const c of a.categories || []) (nomiCol[c.name] || []).forEach((n, i) => { v[n] = (c.values || [])[i]; });
+        const info = a.athlete || {};
+        const ab = nomi["id:" + info.teamId] || nomi[String(info.teamShortName || "").toLowerCase()] || nomi[String(info.teamName || "").toLowerCase()];
+        if (ab && v.avgPoints != null && v.avgMinutes != null)
+          players.push({ nome: info.displayName, pid: String(info.id || ""), sq: ab, min: +v.avgMinutes, pts: +v.avgPoints, reb: +(v.avgRebounds || 0), ast: +(v.avgAssists || 0) });
+      }
+      if (!players.length) errGioc = `stagione ${t.season}: ${ricevuti} ricevuti, 0 riconosciuti (colonne: ${Object.keys(nomiCol).join(",")}; squadra es. ${JSON.stringify(((pj.athletes || [])[0] || {}).athlete || {}).slice(0, 160)})`;
+    } catch (e) { errGioc = `stagione ${t.season}: ${e.message}`; }
+  }
   return { teams, players, diag: [`squadre: ${Object.keys(teams).length}`, `giocatori: ${players.length} (su ${ricevuti})`, ...(errGioc ? [`giocatori: ERRORE ${errGioc}`] : [])] };
 }
 
