@@ -167,8 +167,8 @@ async function apiLive(env) {
     let box = {}; try { box = await caricaBoxscore(x.id, 5); } catch {}
     const f = frazioneGara(x.periodo, x.orologio), ga = { ...x, f, finita: false };
     const mie = picks.filter((q) => q.g === x.id).map((q) => { const l = probLive(q, ga, box, x.giocatori); return l ? { ...q, adesso: l.adesso, pLive: l.p, cur: l.cur } : null; }).filter(Boolean);
-    const gioc = Object.values(box).filter((b) => b.min != null && b.min > 0).sort((a, b) => (b.pts || 0) - (a.pts || 0)).slice(0, 10)
-      .map((b) => ({ nome: b.nome, sq: b.sq, pts: b.pts, reb: b.reb, ast: b.ast, min: b.min }));
+    const gioc = Object.values(box).filter((b) => b.tit || (b.min != null && b.min > 0)).sort((a, b) => (b.tit - a.tit) || (b.pts || 0) - (a.pts || 0))
+      .map((b) => ({ nome: b.nome, sq: b.sq, pts: b.pts, reb: b.reb, ast: b.ast, min: b.min, tit: !!b.tit }));
     const proiTot = x.ptCasa + x.ptTr + x.r.totale * (1 - f);
     const pwLive = phi((x.ptCasa - x.ptTr + x.r.margine * (1 - f)) / Math.max(STD.Spread * Math.sqrt(1 - f), 0.6));
     return { id: x.id, casa: x.casa, trasf: x.trasf, ptCasa: x.ptCasa, ptTr: x.ptTr, periodo: x.periodo, orologio: x.orologio, dettaglio: x.dettaglio, f, proiTot, pwLive,
