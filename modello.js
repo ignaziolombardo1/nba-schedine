@@ -1,0 +1,112 @@
+import { nome } from "./squadre.js";
+
+export const HOME_ADV = 1.5, MIN_MINUTI = 20, PESO_FORMA = 0.6, B2B_PUNTI = 1.2;
+export const STD = { Totale: 17, Spread: 12, Squadra: 12 };
+export const PROB_MIN = 0.70;
+export const MERCATI = {
+  Punti: { k: "pts", unita: "pt", cv: 0.30, stdMin: 3.0, minimo: 14.5, scalini: [9.5, 12.5, 14.5, 17.5, 19.5, 22.5, 24.5, 27.5, 29.5, 32.5, 34.5, 39.5] },
+  Rimbalzi: { k: "reb", unita: "rimb.", cv: 0.40, stdMin: 1.5, minimo: 5.5, scalini: [2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5] },
+  Assist: { k: "ast", unita: "ass.", cv: 0.45, stdMin: 1.3, minimo: 4.5, scalini: [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5] },
+};
+
+function erf(x) {
+  const s = x < 0 ? -1 : 1; x = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return s * y;
+}
+export const phi = (x) => 0.5 * (1 + erf(x / Math.SQRT2));
+export const stdGiocatore = (val, minuti, m) => Math.max(val * MERCATI[m].cv * (1 + 0.02 * Math.max(0, 34 - minuti)), MERCATI[m].stdMin);
+export const probOver = (val, soglia, sd) => 1 - phi((soglia - val) / sd);
+const r1 = (x) => Math.round(x * 10) / 10;
+
+export function proiettaPartita(casa, trasf, teams, b2b = []) {
+  const T = teams, pace = 100;
+  const offCasa = (T[casa].pf + T[trasf].pa) / 2, offTr = (T[trasf].pf + T[casa].pa) / 2;
+  const ptCasa = offCasa * pace / 100 + HOME_ADV / 2 - (b2b.includes(casa) ? B2B_PUNTI : 0);
+  const ptTr = offTr * pace / 100 - HOME_ADV / 2 - (b2b.includes(trasf) ? B2B_PUNTI : 0);
+  return { ptCasa, ptTr, totale: ptCasa + ptTr, margine: ptCasa - ptTr };
+}
+
+export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}) {
+  const lega = Object.values(teams).reduce((a, t) => a + t.pa, 0) / Object.keys(teams).length;
+  const fDif = teams[avv].pa / lega;
+  return players
+    .filter((p) => p.sq === sig && p.min >= MIN_MINUTI && (infortuni[p.nome.trim().toLowerCase()] || {}).stato !== "out")
+    .map((p) => {
+      const inf = (infortuni[p.nome.trim().toLowerCase()] || {}).stato || "";
+      const val = { Punti: p.pts * fDif, Rimbalzi: p.reb, Assist: p.ast };
+      const o = { nome: p.nome, pid: p.pid, sq: sig, min: r1(p.min), inf, forma: r1(p.pts), stagione: r1(p.pts) };
+      for (const [m, c] of Object.entries(MERCATI)) {
+        const v = r1(val[m]);
+        const sd = stdGiocatore(v, p.min, m);
+        const lad = c.scalini.map((t) => ({ t, p: probOver(v, t, sd) })).filter((x) => x.p >= 0.2 && x.p <= 0.97);
+        const buone = lad.filter((x) => x.p >= PROB_MIN);
+        o[c.k] = { v, sd: r1(sd * 100) / 100, media: r1(m === "Punti" ? p.pts : m === "Rimbalzi" ? p.reb : p.ast), lad: lad.map((x) => [x.t, Math.round(x.p * 1000) / 1000]),
+                   rec: buone.length ? Math.max(...buone.map((x) => x.t)) : null };
+      }
+      return o;
+    })
+    .sort((a, b) => b.pts.v - a.pts.v);
+}
+
+export function consigli(partite) {
+  // partite: [{id, casa, trasf, r, giocatori}] -> lista di giocate ordinate per probabilità
+  const out = [];
+  for (const g of partite) {
+    const { casa, trasf, r } = g, part = `${nome(trasf, true)} @ ${nome(casa, true)}`;
+    const base = { g: g.id, partita: part };
+    const pw = phi(Math.abs(r.margine) / STD.Spread), fav = r.margine > 0 ? casa : trasf;
+    if (pw >= 0.60) out.push({ ...base, id: `win_${g.id}`, tipo: "Vincente", squadra: fav, testo: `${nome(fav, true)} vince`, stima: `+${Math.abs(r.margine).toFixed(1)}`, prob: pw,
+      motivo: `Margine stimato di ${Math.abs(r.margine).toFixed(1)} punti a favore di ${nome(fav, true)}: probabilità di vittoria circa ${Math.round(pw * 100)}%.` });
+    for (const [sq, pt] of [[casa, r.ptCasa], [trasf, r.ptTr]]) {
+      const buoni = Array.from({ length: 26 }, (_, i) => 84.5 + 2 * i).filter((x) => 1 - phi((x - pt) / STD.Squadra) >= PROB_MIN);
+      if (buoni.length) { const x = Math.max(...buoni), pr = 1 - phi((x - pt) / STD.Squadra);
+        out.push({ ...base, id: `sq_${g.id}_${sq}`, tipo: "Squadra", squadra: sq, testo: `${nome(sq, true)} over ${x} punti`, stima: pt.toFixed(1), prob: pr,
+          motivo: `Stima ${pt.toFixed(1)} punti per ${nome(sq, true)}: la probabilità di superare ${x} è circa ${Math.round(pr * 100)}%.` }); }
+    }
+    const scal = Array.from({ length: 36 }, (_, i) => 190.5 + 2 * i);
+    const ov = scal.filter((x) => 1 - phi((x - r.totale) / STD.Totale) >= PROB_MIN);
+    if (ov.length) { const x = Math.max(...ov), pr = 1 - phi((x - r.totale) / STD.Totale);
+      out.push({ ...base, id: `tov_${g.id}`, tipo: "Totale", squadra: null, testo: `Totale over ${x}`, stima: r.totale.toFixed(1), prob: pr,
+        motivo: `Stima ${r.totale.toFixed(1)} punti totali: probabilità di superare ${x} circa ${Math.round(pr * 100)}%.` }); }
+    const un = scal.filter((x) => phi((x - r.totale) / STD.Totale) >= PROB_MIN);
+    if (un.length) { const x = Math.min(...un), pr = phi((x - r.totale) / STD.Totale);
+      out.push({ ...base, id: `tun_${g.id}`, tipo: "Totale", squadra: null, testo: `Totale under ${x}`, stima: r.totale.toFixed(1), prob: pr,
+        motivo: `Stima ${r.totale.toFixed(1)} punti totali: probabilità di restare sotto ${x} circa ${Math.round(pr * 100)}%.` }); }
+    for (const sq of [casa, trasf]) {
+      const ds = g.giocatori.filter((p) => p.sq === sq);
+      for (const [m, c] of Object.entries(MERCATI)) {
+        for (const p of [...ds].sort((a, b) => b[c.k].v - a[c.k].v).slice(0, 3)) {
+          const o = p[c.k];
+          if (o.rec === null || o.rec < c.minimo) continue;
+          const pr = probOver(o.v, o.rec, o.sd);
+          out.push({ ...base, id: `${c.k}_${g.id}_${p.pid || p.nome}`, tipo: m, squadra: sq, pid: p.pid, testo: `${p.nome} over ${o.rec} ${c.unita}`, stima: o.v.toFixed(1), prob: pr,
+            motivo: `Stima ${o.v.toFixed(1)} ${c.unita} (media stagione ${o.media.toFixed(1)}, ${Math.round(p.min)} min). Con la variabilità tipica, la probabilità di superare ${o.rec} è circa ${Math.round(pr * 100)}%. Se il bookmaker offre una linea più bassa, c'è valore.` });
+        }
+      }
+    }
+  }
+  return out.sort((a, b) => b.prob - a.prob);
+}
+
+// Valuta una giocata con il risultato reale. 1 azzeccata, 0 sbagliata, 2 non valida
+export function valuta(x, g, box) {
+  const { ptCasa: pc, ptTr: pt } = g;
+  if (pc == null || pt == null) return [2, "punteggio non disponibile"];
+  if (x.tipo === "Vincente") return [(pc > pt ? g.casa : g.trasf) === x.squadra ? 1 : 0, `finale ${pt}-${pc}`];
+  const m = /(over|under) (\d+(?:\.\d+)?)/.exec(x.testo);
+  if (!m) return [2, "giocata non valutabile"];
+  const lato = m[1], soglia = parseFloat(m[2]);
+  let val;
+  if (x.tipo === "Squadra") val = x.squadra === g.casa ? pc : pt;
+  else if (x.tipo === "Totale") val = pc + pt;
+  else if (MERCATI[x.tipo]) {
+    if (!box) return [2, "tabellino non disponibile"];
+    const nomeG = x.testo.split(" over")[0].trim().toLowerCase();
+    val = (box[nomeG] || {})[MERCATI[x.tipo].k];
+    if (val == null) return [2, "non ha giocato"];
+  } else return [2, "giocata non valutabile"];
+  const ok = lato === "over" ? val > soglia : val < soglia;
+  return [ok ? 1 : 0, `fatto ${val}`];
+}
