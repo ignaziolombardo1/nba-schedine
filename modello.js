@@ -223,3 +223,47 @@ export function segnaliLive(gara, box, giocatori) {
   }
   return out.sort((a, b) => b.prob - a.prob);
 }
+
+// ---------- PROPOSTE DI SCHEDINA
+// Una sola giocata per partita (le giocate della stessa partita sono legate tra loro). Probabilità unita = prodotto delle singole.
+export function proposte(picks, gare) {
+  const pre = new Map(gare.filter((g) => g.stato === "pre").map((g) => [g.id, g]));
+  const valide = picks.filter((x) => pre.has(x.g) && !["Squadra"].includes(x.tipo));
+  const migliorePerPartita = (soglia, escludi = []) => {
+    const m = new Map();
+    for (const x of valide) {
+      if (x.prob < soglia || escludi.includes(x.tipo)) continue;
+      const k = x.g, cur = m.get(k);
+      if (!cur || x.prob > cur.prob) m.set(k, x);
+    }
+    return [...m.values()].sort((a, b) => b.prob - a.prob);
+  };
+  const costruisciSchedina = (id, nomeS, sotto, n, soglia, tono) => {
+    let legs = migliorePerPartita(soglia).slice(0, n);
+    if (legs.length < 2) legs = valide.filter((x) => x.prob >= soglia).slice(0, Math.min(n, 3));
+    if (legs.length < 2) return null;
+    const p = legs.reduce((a, x) => a * x.prob, 1);
+    const prima = legs.map((x) => pre.get(x.g).ora).sort()[0];
+    return { id, nome: nomeS, sotto, tono, prob: p, quotaEqua: 1 / p, legs: legs.map((x) => ({ g: x.g, testo: x.testo, tipo: x.tipo, partita: x.partita, prob: x.prob, pid: x.pid || null, squadra: x.squadra || null, stima: x.stima, ora: pre.get(x.g).ora })), prima,
+      stessaPartita: new Set(legs.map((x) => x.g)).size < legs.length };
+  };
+  const out = [
+    costruisciSchedina("sicura", "La sicura", "Poche giocate, le più solide del giorno", 3, 0.78, "ok"),
+    costruisciSchedina("equilibrata", "L'equilibrata", "Più giocate, ancora tutte sopra il 72%", 4, 0.72, "mid"),
+    costruisciSchedina("ambiziosa", "L'ambiziosa", "Tante giocate: paga di più, ma è molto più difficile", 6, 0.70, "alta"),
+  ].filter(Boolean);
+  // giocatori: solo punti/rimbalzi/assist di giocatori in partite diverse
+  const gioc = [...pre.values()].length ? (() => {
+    const m = new Map();
+    for (const x of valide) { if (!["Punti", "Rimbalzi", "Assist"].includes(x.tipo) || x.prob < 0.72) continue; const cur = m.get(x.g); if (!cur || x.prob > cur.prob) m.set(x.g, x); }
+    const legs = [...m.values()].sort((a, b) => b.prob - a.prob).slice(0, 4);
+    if (legs.length < 2) return null;
+    const p = legs.reduce((a, x) => a * x.prob, 1);
+    return { id: "giocatori", nome: "Solo giocatori", sotto: "Punti, rimbalzi e assist dei migliori in campo", tono: "mid", prob: p, quotaEqua: 1 / p, prima: legs.map((x) => pre.get(x.g).ora).sort()[0], stessaPartita: false,
+      legs: legs.map((x) => ({ g: x.g, testo: x.testo, tipo: x.tipo, partita: x.partita, prob: x.prob, pid: x.pid || null, squadra: x.squadra || null, stima: x.stima, ora: pre.get(x.g).ora })) };
+  })() : null;
+  if (gioc) out.push(gioc);
+  // evita proposte identiche
+  const viste = new Set();
+  return out.filter((s) => { const k = s.legs.map((l) => l.testo).join("|"); if (viste.has(k)) return false; viste.add(k); return true; });
+}

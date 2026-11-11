@@ -77,14 +77,14 @@ function schedaPartita(D, p, topPick, cliccabile) {
   const t = T(D, p.casa), v = T(D, p.trasf), r = p.r;
   let chip, col = MU;
   if (p.stato === "post") { chip = "Finale"; col = GR; } else if (p.stato === "in") { chip = `<span class="dot"></span>Live · ${esc(p.dettaglio)}`; col = OR; } else chip = esc(p.ora);
-  const riga = (ab, ruolo, stima, reale) => `<div class="riga" style="padding:5px 0"><div class="lg">${logo(ab, 38)}<div><div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div></div></div><div><div class="big">${reale == null ? "–" : reale}</div><div class="s" style="text-align:right">stima ${stima.toFixed(1)}</div></div></div>`;
+  const riga = (ab, ruolo, stima, reale) => `<div class="riga" style="padding:5px 0"><div class="lg">${logo(ab, 38)}<div><div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div></div></div><div><div class="big${p.stato === "in" ? " liveN" : ""}" data-sc="${ruolo === "casa" ? "c" : "t"}">${reale == null ? "–" : reale}</div><div class="s" style="text-align:right">stima ${stima.toFixed(1)}</div></div></div>`;
   const fav = r.margine > 0 ? p.casa : p.trasf;
   const cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#4a5060" : v.c;
   let chips = `<span class="chip">Totale ${r.totale.toFixed(1)}</span><span class="chip">Spread ${esc(T(D, fav).b)} -${Math.abs(r.margine).toFixed(1)}</span>`;
   if (topPick) chips += `<span class="chip" style="color:${GR}">Top: ${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
-  return `<${tag} class="card"${href} style="border-left:3px solid ${cc}"><div class="riga" style="margin-bottom:6px"><span class="pill" style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>${riga(p.trasf, "trasferta", r.ptTr, p.ptTr)}${riga(p.casa, "casa", r.ptCasa, p.ptCasa)}
+  return `<${tag} class="card${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="border-left:3px solid ${cc}"><div class="riga" style="margin-bottom:6px"><span class="pill" data-pill style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>${riga(p.trasf, "trasferta", r.ptTr, p.ptTr)}${riga(p.casa, "casa", r.ptCasa, p.ptCasa)}
   <div class="s" style="margin:10px 0 0">Probabilità di vittoria</div><div class="bar"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
   <div class="riga s" style="margin:4px 0 8px"><span>${esc(p.trasf)} ${pct(1 - r.pw)}</span><span>${esc(p.casa)} ${pct(r.pw)}</span></div>${chips}</${tag}>`;
 }
@@ -113,6 +113,36 @@ function migliori(D) {
 }
 
 // ---------- PARTITE
+function hero(D) {
+  const n = D.partite.length; if (!n) return "";
+  const live = D.partite.filter((p) => p.stato === "in").length, fin = D.partite.filter((p) => p.stato === "post").length, pre = n - live - fin;
+  const top = D.picks.find((x) => D.partite.find((p) => p.id === x.g && p.stato === "pre")) || D.picks[0];
+  return `<div class="hero"><div class="hn">${n}</div><div style="min-width:0"><div class="ht">${n === 1 ? "partita" : "partite"} in programma</div><div class="s">${live ? `<span class="dot"></span>${live} in corso · ` : ""}${pre} da giocare · ${fin} finite</div>${top ? `<div class="htop"><i class="ti ti-star-filled"></i> ${esc(top.testo)} <b>${pct(top.prob)}</b></div>` : ""}</div></div>`;
+}
+// punteggi che si aggiornano da soli (ogni 10 secondi) quando ci sono partite in corso o vicine all'inizio
+function seguiPunteggi(D) {
+  const ora = Date.now(), vicine = D.partite.some((p) => p.stato === "pre" && p.iso && Date.parse(p.iso) - ora < 15 * 60000);
+  if (!D.partite.some((p) => p.stato === "in") && !vicine) return;
+  const giro = async () => {
+    if (location.hash !== "" && location.hash !== "#/") return;
+    try {
+      const L = await (await fetch("/api/live")).json(); if (L.errore) throw 0;
+      const vive = new Set(L.partite.map((x) => x.id)); let cambio = false;
+      for (const x of L.partite) {
+        const c = APP.querySelector(`[data-gid="${x.id}"]`); if (!c) continue;
+        if (c.dataset.st !== "in") { cambio = true; continue; }
+        const t = c.querySelector('[data-sc="t"]'), k = c.querySelector('[data-sc="c"]'), pl = c.querySelector("[data-pill]");
+        if (t && String(t.textContent) !== String(x.ptTr)) { t.textContent = x.ptTr; t.classList.remove("flash"); void t.offsetWidth; t.classList.add("flash"); }
+        if (k && String(k.textContent) !== String(x.ptCasa)) { k.textContent = x.ptCasa; k.classList.remove("flash"); void k.offsetWidth; k.classList.add("flash"); }
+        if (pl) pl.innerHTML = `<span class="dot"></span>Live · ${esc(x.dettaglio)}`;
+      }
+      for (const p of D.partite) if (p.stato === "in" && !vive.has(p.id)) cambio = true;
+      if (cambio) return route(true);
+    } catch {}
+    timer = setTimeout(giro, 10000);
+  };
+  timer = setTimeout(giro, 10000);
+}
 async function vistaPartite(force) {
   APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
   let D; try { D = await dati(force); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
@@ -120,6 +150,7 @@ async function vistaPartite(force) {
   let h = topBar(D) + giorniChips();
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
   if (D.partite.length && !D.partite.some((p) => p.giocatori && p.giocatori.length)) h += `<div class="card" style="border-color:${RD}"><b style="color:${RD}">Giocatori non disponibili</b><div class="s" style="margin-top:4px">${esc((D.diag || []).filter((x) => /giocatori/.test(x)).join(" · ") || "ESPN non ha restituito le statistiche dei giocatori.")}</div></div>`;
+  h += hero(D);
   h += migliori(D);
   h += confrontoMercato(D);
   if (D.partite.length) h += `<h2>Tutte le partite</h2>`;
@@ -129,7 +160,32 @@ async function vistaPartite(force) {
   }
   h += `<button class="btn" id="agg"><i class="ti ti-refresh"></i> Aggiorna ora</button>`;
   APP.innerHTML = h; bindGiorni(); $("#agg").onclick = () => route(true);
-  if (D.partite.some((p) => p.stato === "in")) timer = setTimeout(() => { if (location.hash === "" || location.hash === "#/") route(true); }, 60000);
+  seguiPunteggi(D);
+}
+
+// ---------- SCHEDINE
+const TONI = { ok: [GR, "ti-shield-check"], mid: [OR, "ti-scale"], alta: [RD, "ti-flame"] };
+function testoSchedina(s) { return `${s.nome} (${s.legs.length} giocate, probabilità unita ${pct(s.prob)})\n` + s.legs.map((l) => `• ${l.testo} (${l.partita}) ${pct(l.prob)}`).join("\n"); }
+function cardSchedina(s) {
+  const [col, ic] = TONI[s.tono] || [OR, "ti-ticket"];
+  return `<div class="card sch" style="border-top:3px solid ${col}"><div class="riga" style="align-items:flex-start"><div><div class="sn"><i class="ti ${ic}" style="color:${col}"></i> ${esc(s.nome)}</div><div class="s">${esc(s.sotto)}</div></div><div style="text-align:right"><div class="sp" style="color:${col}">${pct(s.prob)}</div><div class="s">tutte centrate</div></div></div>
+  <div style="margin:10px 0 4px">${s.legs.map((l) => `<div class="leg">${l.pid ? foto(l.pid, 32) : l.squadra ? logo(l.squadra, 28) : `<span class="ph" style="width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-chart-bar" style="color:${OR}"></i></span>`}<div style="min-width:0;flex:1"><div style="font-weight:600">${esc(l.testo)}</div><div class="s">${esc(l.partita)} · ${esc(l.ora)}</div></div><b style="color:${colProb(l.prob)}">${pct(l.prob)}</b></div>`).join("")}</div>
+  <div class="s" style="line-height:1.5">Quota giusta per questa probabilità: <b style="color:#f2f2f2">${s.quotaEqua.toFixed(2)}</b>. Ha senso solo se il tuo bookmaker ne offre di più.${s.stessaPartita ? ` <span style="color:${AM}">Alcune giocate sono della stessa partita, quindi la probabilità reale è diversa.</span>` : ""}</div>
+  <button class="btn cp" data-cp="${esc(testoSchedina(s))}" style="margin:10px 0 0"><i class="ti ti-copy"></i> Copia la schedina</button></div>`;
+}
+async function vistaSchedine(force) {
+  APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
+  let D; try { D = await dati(force); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
+  let h = topBar(D) + giorniChips();
+  const sc = D.schedine || [];
+  h += `<div class="cap" style="margin-top:0">Proposte costruite dall'app con le giocate più probabili del giorno, una sola per partita. Sono stime del modello: nessuna schedina è sicura.</div>`;
+  if (!sc.length) h += `<div class="vuoto">Per questo giorno non ci sono abbastanza partite da giocare o giocate sopra la soglia. Le proposte compaiono prima dell'inizio delle partite.</div>`;
+  h += sc.map(cardSchedina).join("");
+  const singola = D.picks.find((x) => D.partite.find((p) => p.id === x.g && p.stato === "pre"));
+  if (singola) h += `<h2>Singola del giorno</h2><div class="card riga" style="gap:12px;border-top:3px solid ${GR}">${anello(singola.prob * 100, colProb(singola.prob), 64)}<div style="min-width:0;flex:1"><div style="font-weight:600;font-size:16px">${esc(singola.testo)}</div><div class="s">${esc(singola.partita)} · stima ${esc(singola.stima)}</div></div></div><div class="cap">${esc(singola.motivo)}</div>`;
+  h += `<div class="cap">Più giocate unisci, meno la schedina è probabile: tre giocate al 80% insieme valgono circa il 51%.</div>`;
+  APP.innerHTML = h; bindGiorni();
+  APP.querySelectorAll(".cp").forEach((b) => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.cp); b.innerHTML = `<i class="ti ti-check"></i> Copiata`; } catch { b.textContent = "Copia non riuscita"; } });
 }
 
 // ---------- COMBO
@@ -383,12 +439,13 @@ let timer = null;
 function route(force) {
   clearTimeout(timer);
   const hsh = location.hash.replace(/^#/, "") || "/";
-  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/combo") ? "combo" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") ? "storico" : "partite";
+  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") ? "partite" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const m = /^\/partita\/(\d+)/.exec(hsh);
   if (m) vistaStudio(m[1], force === true);
   else if (attivo === "live") vistaLive(true);
-  else if (attivo === "combo") vistaCombo(force === true);
+  else if (attivo === "schedine") vistaSchedine(force === true);
+  else if (hsh.startsWith("/combo")) vistaCombo(force === true);
   else if (attivo === "esiti") vistaEsiti();
   else if (hsh.startsWith("/diag")) vistaDiag();
   else if (attivo === "storico") vistaStorico();

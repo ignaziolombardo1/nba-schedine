@@ -1,5 +1,5 @@
 import { info, nome } from "./squadre.js";
-import { proiettaPartita, proiettaGiocatori, consigli, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
+import { proiettaPartita, proiettaGiocatori, consigli, proposte, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
 import { aggiornaQuote, chiaveGara } from "./quote.js";
 import { caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, caricaGamelog, dataUS, get } from "./espn.js";
 
@@ -141,8 +141,8 @@ async function apiGiorno(env, ctx, offset, data = null) {
   const sq = {}; sigle.forEach((s) => { sq[s] = info(s); });
   const finiteNome = new Set();
   return { aggiornato: new Date().toISOString(), offset, squadre: sq, linee: g.linee, ieri: g.ieri, b2b,
-    valore: dovePiuDiverso(gare), quote: fm.quote ? { t: fm.quote.t, crediti: fm.quote.crediti, partite: Object.keys(fm.quote.giochi || {}).length } : null,
-    partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr,
+    schedine: proposte(picks, gare), valore: dovePiuDiverso(gare), quote: fm.quote ? { t: fm.quote.t, crediti: fm.quote.crediti, partite: Object.keys(fm.quote.giochi || {}).length } : null,
+    partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, iso: x.iso, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr,
       r: { ...x.r, pw: phi(x.r.margine / STD.Spread) }, giocatori: x.giocatori, inf: x.inf })),
     picks, diag: [...stat.diag, `forma: ${fm.n || 0} giocatori`, `partite: ${gare.length}`, `linee: ${Object.keys(g.linee).length}`, `infortuni: ${Object.keys(infortuni).length}`, `registro: ${registro}`, ...errori] };
 }
