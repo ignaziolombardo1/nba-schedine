@@ -199,6 +199,43 @@ function ultimeHtml(D, sig, ul) {
     ul.map((x) => `<div class="riga rg"><div class="lg">${logo(x.avv, 22)}<div><div style="font-weight:500">${x.casa ? "vs" : "@"} ${esc((D.squadre[x.avv] || { b: x.avv }).b)}</div><div class="s">${esc(x.data)}</div></div></div><b style="color:${x.vinta ? GR : RD}">${x.pf}-${x.pa}</b></div>`).join("") + `</div>`;
 }
 
+
+// ---------- LIVE
+function schedaLive(D, p) {
+  const t = T(D, p.casa), v = T(D, p.trasf), cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#4a5060" : v.c;
+  const riga = (ab, ruolo, pt) => `<div class="riga" style="padding:4px 0"><div class="lg">${logo(ab, 38)}<div><div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div></div></div><div class="big">${pt}</div></div>`;
+  return `<div class="card" style="border-left:3px solid ${cc}"><div class="riga" style="margin-bottom:6px"><span class="pill" style="color:${OR}"><span class="dot"></span>Live · ${esc(p.dettaglio)}</span><span class="s">Gara giocata al ${Math.round(p.f * 100)}%</span></div>
+  ${riga(p.trasf, "trasferta", p.ptTr)}${riga(p.casa, "casa", p.ptCasa)}
+  <div class="bar" style="margin-top:6px;height:4px"><div style="width:${(p.f * 100).toFixed(0)}%;background:${OR}"></div></div>
+  <div class="s" style="margin:10px 0 0">Probabilità di vittoria in questo momento</div><div class="bar"><div style="width:${((1 - p.pwLive) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
+  <div class="riga s" style="margin:4px 0 8px"><span>${esc(p.trasf)} ${pct(1 - p.pwLive)}</span><span>${esc(p.casa)} ${pct(p.pwLive)}</span></div>
+  <span class="chip">Totale ora ${p.ptCasa + p.ptTr}</span><span class="chip">Finale stimato ${p.proiTot.toFixed(0)}</span><span class="chip">Prima della gara ${p.r.totale.toFixed(0)}</span></div>`;
+}
+function rigaLive(x) {
+  const hit = x.pLive >= 0.995 && x.cur != null, col = hit ? GR : x.pLive >= 0.7 ? GR : x.pLive >= 0.4 ? OR : RD;
+  const delta = x.pLive - x.prob, fr = delta >= 0 ? "ti-arrow-up-right" : "ti-arrow-down-right";
+  return `<div class="card riga" style="padding:10px 12px;gap:10px"><div style="min-width:0;flex:1"><div style="font-weight:500">${esc(x.testo)}</div><div class="s">${esc(x.tipo)} · ora ${esc(x.adesso)}</div><div class="s">Prima ${pct(x.prob)} <i class="ti ${fr}" style="color:${delta >= 0 ? GR : RD}"></i></div></div><div style="text-align:right"><div style="font-size:20px;font-weight:600;color:${col}">${pct(x.pLive)}</div><div class="s">${hit ? "Centrata" : x.pLive < 0.15 ? "Difficile" : "In corso"}</div></div></div>`;
+}
+async function vistaLive(primo = true) {
+  if (primo) APP.innerHTML = topBar() + skel();
+  let D; try { D = await api("/api/live", 8000); } catch (e) { if (primo) APP.innerHTML = topBar() + errBox(e); timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000); return; }
+  if (!location.hash.startsWith("#/live")) return;
+  let h = topBar(D) + `<div class="cap" style="margin-top:0">Si aggiorna da solo ogni 20 secondi. Le probabilità tengono conto di punteggio, tempo rimasto e minuti giocati.</div>`;
+  if (!D.partite.length) {
+    h += `<div class="vuoto"><b>Nessuna partita in corso.</b><br>Oggi: ${D.totali} partite, ${D.finite} finite.</div>`;
+    if (D.prossime.length) h += `<h2>Prossime partite</h2>` + D.prossime.map((q) => `<a class="card riga" href="#/partita/${q.id}"><div class="lg">${logo(q.trasf, 28)}<b>${esc(q.trasf)}</b><span class="s">@</span>${logo(q.casa, 28)}<b>${esc(q.casa)}</b></div><span class="s">${esc(q.ora)}</span></a>`).join("");
+  }
+  for (const p of D.partite) {
+    h += schedaLive(D, p);
+    const picks = [...p.picks].sort((a, b) => (a.pLive >= 0.995) - (b.pLive >= 0.995) || b.pLive - a.pLive);
+    if (picks.length) h += `<div class="sub">Giocate di questa partita</div>` + picks.map(rigaLive).join("");
+    if (p.giocatori.length) h += `<div class="sub">Giocatori in campo</div><div class="card">` + `<div class="riga s" style="padding-bottom:4px"><span>Giocatore</span><span>PT · RIM · AST · MIN</span></div>` + p.giocatori.map((g) => `<div class="riga rg"><span style="min-width:0">${esc(g.nome)} <span class="s">${esc(g.sq)}</span></span><b style="white-space:nowrap">${g.pts ?? 0} · ${g.reb ?? 0} · ${g.ast ?? 0} · ${Math.round(g.min ?? 0)}</b></div>`).join("") + `</div>`;
+    h += `<a class="btn" style="display:block;text-align:center" href="#/partita/${p.id}">Apri lo studio di questa partita</a>`;
+  }
+  APP.innerHTML = h;
+  timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000);
+}
+
 // ---------- ESITI e STORICO
 function barraPerc(t, k, n, att) { const p = n ? k / n * 100 : 0; return `<div class="card pc"><div class="s">${esc(t)}</div><b>${k}/${n}</b> <span class="s">(${p.toFixed(0)}%${att != null ? " · previsto " + pct(att) : ""})</span><div class="mini"><i style="width:${p.toFixed(0)}%;background:${p >= 60 ? GR : RD}"></i></div></div>`; }
 function rigaEsito(r) {
@@ -247,10 +284,11 @@ let timer = null;
 function route(force) {
   clearTimeout(timer);
   const hsh = location.hash.replace(/^#/, "") || "/";
-  const attivo = hsh.startsWith("/combo") ? "combo" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : "partite";
+  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/combo") ? "combo" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const m = /^\/partita\/(\d+)/.exec(hsh);
   if (m) vistaStudio(m[1], force === true);
+  else if (attivo === "live") vistaLive(true);
   else if (attivo === "combo") vistaCombo(force === true);
   else if (attivo === "esiti") vistaEsiti();
   else if (attivo === "storico") vistaStorico();
