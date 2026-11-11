@@ -31,6 +31,7 @@ export function dataUS(offset = 0) {
 }
 const punti = (x) => { const n = parseInt(parseFloat(x)); return Number.isFinite(n) ? n : null; };
 
+const quarti = (c) => (c.linescores || []).map((l) => { const v = parseFloat(l.value ?? l.displayValue); return Number.isFinite(v) ? v : 0; });
 export function leggiScoreboard(sb) {
   const partite = [], linee = {};
   for (const ev of sb.events || []) {
@@ -41,7 +42,8 @@ export function leggiScoreboard(sb) {
     const tipo = (ev.status || {}).type || {}, stato = tipo.state;
     partite.push({ id: String(ev.id), casa, trasf, ora: oraRoma(ev.date), iso: ev.date, stato, dettaglio: tipo.shortDetail || "",
       ptCasa: stato !== "pre" ? punti(cc.score) : null, ptTr: stato !== "pre" ? punti(ct.score) : null,
-      periodo: (ev.status || {}).period || 0, orologio: String((ev.status || {}).displayClock || "") });
+      periodo: (ev.status || {}).period || 0, orologio: String((ev.status || {}).displayClock || ""),
+      qCasa: stato !== "pre" ? quarti(cc) : [], qTr: stato !== "pre" ? quarti(ct) : [] });
     for (const o of (comp.odds || []).slice(0, 1)) {
       if (o.overUnder) linee[`tot_${casa}`] = parseFloat(o.overUnder);
       const m = /^([A-Z]{2,4})\s+([+-]?\d+(?:\.\d+)?)$/.exec(String(o.details || "").trim());

@@ -268,7 +268,7 @@ async function apiGiorno(env, ctx, offset, data = null) {
   return { aggiornato: new Date().toISOString(), offset, squadre: sq, linee: g.linee, ieri: g.ieri, b2b,
     salute,
     schedine: proposte(picks, gare).map((s) => ({ ...s, chiave: `sch|${data || romaYMD(Date.now() + offset * 86400000)}|${s.id}` })), valore: dovePiuDiverso(gare), quote: fm.quote ? { t: fm.quote.t, crediti: fm.quote.crediti, partite: Object.keys(fm.quote.giochi || {}).length } : null,
-    partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, iso: x.iso, fs: x.fs, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr,
+    partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, iso: x.iso, fs: x.fs, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr, qCasa: x.qCasa, qTr: x.qTr,
       r: { ...x.r, pw: phi(x.r.margine / STD.Spread) }, giocatori: x.giocatori, inf: x.inf })),
     picks, diag: [...stat.diag, `forma: ${fm.n || 0} giocatori`, `partite: ${gare.length}`, `linee: ${Object.keys(g.linee).length}`, `infortuni: ${Object.keys(infortuni).length}`, `registro: ${registro}`, ...errori] };
 }
@@ -355,7 +355,7 @@ async function apiLive(env) {
       mercato = { linea: qg.tot.linea, pMk: qg.tot.pOver, pNostra: 1 - phi((qg.tot.linea - (x.ptCasa + x.ptTr + x.r.totale * (1 - f))) / sdT), minuti: Math.round((Date.now() - Date.parse(fm.quote.t)) / 60000), n: qg.tot.n };
     }
     const pwLive = phi((x.ptCasa - x.ptTr + x.r.margine * (1 - f)) / Math.max(STD.Spread * Math.sqrt(1 - f), 0.6));
-    return { id: x.id, casa: x.casa, trasf: x.trasf, ptCasa: x.ptCasa, ptTr: x.ptTr, periodo: x.periodo, orologio: x.orologio, dettaglio: x.dettaglio, f, proiTot, pwLive,
+    return { id: x.id, casa: x.casa, trasf: x.trasf, ptCasa: x.ptCasa, ptTr: x.ptTr, qCasa: x.qCasa, qTr: x.qTr, periodo: x.periodo, orologio: x.orologio, dettaglio: x.dettaglio, f, proiTot, pwLive,
       r: x.r, mercato, giocatori: gioc, picks: mie, segnali: segnaliLive(ga, box, x.giocatori).slice(0, 8) };
   }));
   const sq = {}; out.forEach((x) => { sq[x.casa] = info(x.casa); sq[x.trasf] = info(x.trasf); });
