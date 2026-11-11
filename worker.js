@@ -87,7 +87,7 @@ async function apiStorico(env) {
   if (attesa.length) {
     try {
       const finite = new Map();
-      for (const off of [0, -1, -2]) {
+      for (const off of [0, -1]) {
         const g = await caricaGiorno(off);
         for (const p of [...g.partite, ...g.ieri]) if (p.stato === "post") finite.set(p.id, p);
       }
@@ -110,7 +110,9 @@ async function apiStorico(env) {
 
 
 async function apiLive() {
-  const [g, stat] = await Promise.all([caricaGiorno(0), caricaStatistiche()]);
+  const [g, gPrima, stat] = await Promise.all([caricaGiorno(0), caricaGiorno(-1).catch(() => ({ partite: [] })), caricaStatistiche()]);
+  const visti = new Set(g.partite.map((p) => p.id));
+  g.partite = [...g.partite, ...gPrima.partite.filter((p) => p.stato === "in" && !visti.has(p.id))];
   let infortuni = {}; try { infortuni = await caricaInfortuni(); } catch {}
   const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))]);
   const picks = consigli(gare);
