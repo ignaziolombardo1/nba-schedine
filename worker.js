@@ -1,5 +1,5 @@
 import { info, nome } from "./squadre.js";
-import { proiettaPartita, proiettaGiocatori, consigli, valuta, phi, STD, frazioneGara, probLive } from "./modello.js";
+import { proiettaPartita, proiettaGiocatori, consigli, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
 import { caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, dataUS } from "./espn.js";
 
 const J = (o, ttl = 0) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": ttl ? `public, max-age=${ttl}` : "no-store", "access-control-allow-origin": "*" } });
@@ -110,7 +110,7 @@ async function apiStorico(env) {
 
 
 async function apiLive() {
-  const [g, gPrima, stat] = await Promise.all([caricaGiorno(0), caricaGiorno(-1).catch(() => ({ partite: [] })), caricaStatistiche()]);
+  const [g, gPrima, stat] = await Promise.all([caricaGiorno(0, null, 5), caricaGiorno(-1, null, 5).catch(() => ({ partite: [] })), caricaStatistiche()]);
   const visti = new Set(g.partite.map((p) => p.id));
   g.partite = [...g.partite, ...gPrima.partite.filter((p) => p.stato === "in" && !visti.has(p.id))];
   let infortuni = {}; try { infortuni = await caricaInfortuni(); } catch {}
@@ -118,7 +118,7 @@ async function apiLive() {
   const picks = consigli(gare);
   const inCorso = gare.filter((x) => x.stato === "in");
   const out = await Promise.all(inCorso.map(async (x) => {
-    let box = {}; try { box = await caricaBoxscore(x.id, 15); } catch {}
+    let box = {}; try { box = await caricaBoxscore(x.id, 5); } catch {}
     const f = frazioneGara(x.periodo, x.orologio), ga = { ...x, f, finita: false };
     const mie = picks.filter((q) => q.g === x.id).map((q) => { const l = probLive(q, ga, box, x.giocatori); return l ? { ...q, adesso: l.adesso, pLive: l.p, cur: l.cur } : null; }).filter(Boolean);
     const gioc = Object.values(box).filter((b) => b.min != null && b.min > 0).sort((a, b) => (b.pts || 0) - (a.pts || 0)).slice(0, 10)
@@ -126,7 +126,7 @@ async function apiLive() {
     const proiTot = x.ptCasa + x.ptTr + x.r.totale * (1 - f);
     const pwLive = phi((x.ptCasa - x.ptTr + x.r.margine * (1 - f)) / Math.max(STD.Spread * Math.sqrt(1 - f), 0.6));
     return { id: x.id, casa: x.casa, trasf: x.trasf, ptCasa: x.ptCasa, ptTr: x.ptTr, periodo: x.periodo, orologio: x.orologio, dettaglio: x.dettaglio, f, proiTot, pwLive,
-      r: x.r, giocatori: gioc, picks: mie };
+      r: x.r, giocatori: gioc, picks: mie, segnali: segnaliLive(ga, box, x.giocatori).slice(0, 8) };
   }));
   const sq = {}; out.forEach((x) => { sq[x.casa] = info(x.casa); sq[x.trasf] = info(x.trasf); });
   return { aggiornato: new Date().toISOString(), squadre: sq, partite: out, totali: gare.length, finite: gare.filter((x) => x.stato === "post").length, prossime: gare.filter((x) => x.stato === "pre").map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora })) };
@@ -138,7 +138,7 @@ export default {
     if (!p.startsWith("/api/")) return env.ASSETS.fetch(req);
     try {
       const off = Math.max(-2, Math.min(3, parseInt(url.searchParams.get("g") || "0") || 0));
-      if (p === "/api/live") { const d = await apiLive(); for (const q of d.prossime) { d.squadre[q.casa] = info(q.casa); d.squadre[q.trasf] = info(q.trasf); } return J(d, 10); }
+      if (p === "/api/live") { const d = await apiLive(); for (const q of d.prossime) { d.squadre[q.casa] = info(q.casa); d.squadre[q.trasf] = info(q.trasf); } return J(d, 3); }
       const dp = url.searchParams.get("d"), data = dp && /^\d{8}$/.test(dp) ? dp : null;
       if (p === "/api/giorno") return J(await apiGiorno(env, ctx, off, data), 45);
       if (p === "/api/esiti") return J(await apiEsiti(off, data), 120);
