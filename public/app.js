@@ -1,0 +1,264 @@
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const APP = $("#app");
+const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
+const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
+const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
+const SC = [["Squadre e totali", "ti-chart-bar", ["Vincente", "Squadra", "Totale"]], ["Punti", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]]];
+
+// ---------- matematica
+function erf(x) { const s = x < 0 ? -1 : 1; x = Math.abs(x); const t = 1 / (1 + 0.3275911 * x); return s * (1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x)); }
+const phi = (x) => 0.5 * (1 + erf(x / Math.SQRT2));
+const pct = (p) => Math.round(p * 100) + "%";
+
+// ---------- dati
+let giorno = ls.get("giorno", 0);
+const cache = {};
+async function api(path, ttl = 0) {
+  const c = cache[path];
+  if (c && Date.now() - c.t < ttl) return c.d;
+  const r = await fetch(path);
+  const d = await r.json();
+  if (!r.ok || d.errore) throw new Error(d.errore || "Errore " + r.status);
+  cache[path] = { t: Date.now(), d };
+  return d;
+}
+const dati = (force) => { if (force) delete cache["/api/giorno?g=" + giorno]; return api("/api/giorno?g=" + giorno, 40000); };
+
+// ---------- pezzi grafici
+const T = (D, ab) => (D.squadre && D.squadre[ab]) || { n: ab, b: ab, c: "#4a5060" };
+const logo = (ab, s = 38) => `<img class="tl" style="width:${s}px;height:${s}px" loading="lazy" alt="" src="https://a.espncdn.com/i/teamlogos/nba/500/${esc(String(ab).toLowerCase())}.png" onerror="this.style.visibility='hidden'">`;
+const foto = (pid, s = 46) => pid ? `<img class="ph" style="width:${s}px;height:${s}px" loading="lazy" alt="" src="https://a.espncdn.com/i/headshots/nba/players/full/${esc(pid)}.png" onerror="this.style.visibility='hidden'">` : `<span class="ph" style="width:${s}px;height:${s}px;display:inline-block"></span>`;
+function anello(p, col, size = 52) {
+  const r = size / 2 - 5, L = 2 * Math.PI * r, c = size / 2;
+  return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="#232836" stroke-width="6"/><circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(L * p / 100).toFixed(1)} ${L.toFixed(1)}" transform="rotate(-90 ${c} ${c})"/><text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" fill="#f2f2f2" font-size="${size > 60 ? 18 : 13}" font-weight="600">${Math.round(p)}%</text></svg>`;
+}
+const colProb = (p) => (p >= 0.8 ? GR : OR);
+function cardPick(x) { return `<div class="card cardp"><div style="min-width:0"><div class="s">${esc(x.partita)} · ${esc(x.tipo)}</div><div style="font-weight:500">${esc(x.testo)}</div></div><div><div class="v" style="color:${colProb(x.prob)}">${pct(x.prob)}</div><div class="e">stima ${esc(x.stima)}</div></div></div>`; }
+function rigaPick(D, x) {
+  const vis = x.pid ? foto(x.pid, 34) : x.squadra ? logo(x.squadra, 30) : `<span class="ph" style="width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-chart-bar" style="color:${OR}"></i></span>`;
+  return `<div class="pick">${anello(x.prob * 100, colProb(x.prob), 48)}${vis}<div style="min-width:0"><div class="t">${esc(x.testo)}</div><div class="s">${esc(x.partita)}</div></div></div>`;
+}
+function topBar(D) {
+  const ora = D && D.aggiornato ? new Date(D.aggiornato).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) : "";
+  return `<div class="top"><img class="logo" src="/icon-192.png" alt=""><div><div class="nome">NBA Schedine</div><div class="s">Studio e consigli sul basket${ora ? " · agg. " + ora : ""}</div></div></div>`;
+}
+function giorniChips() { return `<div class="days">${GIORNI.map(([n, o]) => `<button class="chipbtn${o === giorno ? " on" : ""}" data-g="${o}">${n}</button>`).join("")}</div>`; }
+function bindGiorni() { APP.querySelectorAll("[data-g]").forEach((b) => b.onclick = () => { giorno = +b.dataset.g; ls.set("giorno", giorno); route(); }); }
+const skel = () => `<div class="skel"></div><div class="skel"></div><div class="skel"></div>`;
+const errBox = (e) => `<div class="err"><b>Non riesco a caricare i dati.</b><br>${esc(e.message || e)}<br><button class="btn" style="margin-top:10px" onclick="route(true)">Riprova</button></div>`;
+
+function schedaPartita(D, p, topPick, cliccabile) {
+  const t = T(D, p.casa), v = T(D, p.trasf), r = p.r;
+  let chip, col = MU;
+  if (p.stato === "post") { chip = "Finale"; col = GR; } else if (p.stato === "in") { chip = `<span class="dot"></span>Live · ${esc(p.dettaglio)}`; col = OR; } else chip = esc(p.ora);
+  const riga = (ab, ruolo, stima, reale) => `<div class="riga" style="padding:5px 0"><div class="lg">${logo(ab, 38)}<div><div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div></div></div><div><div class="big">${reale == null ? "–" : reale}</div><div class="s" style="text-align:right">stima ${stima.toFixed(1)}</div></div></div>`;
+  const fav = r.margine > 0 ? p.casa : p.trasf;
+  const cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#4a5060" : v.c;
+  let chips = `<span class="chip">Totale ${r.totale.toFixed(1)}</span><span class="chip">Spread ${esc(T(D, fav).b)} -${Math.abs(r.margine).toFixed(1)}</span>`;
+  if (topPick) chips += `<span class="chip" style="color:${GR}">Top: ${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
+  for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
+  const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
+  return `<${tag} class="card"${href} style="border-left:3px solid ${cc}"><div class="riga" style="margin-bottom:6px"><span class="pill" style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>${riga(p.trasf, "trasferta", r.ptTr, p.ptTr)}${riga(p.casa, "casa", r.ptCasa, p.ptCasa)}
+  <div class="s" style="margin:10px 0 0">Probabilità di vittoria</div><div class="bar"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
+  <div class="riga s" style="margin:4px 0 8px"><span>${esc(p.trasf)} ${pct(1 - r.pw)}</span><span>${esc(p.casa)} ${pct(r.pw)}</span></div>${chips}</${tag}>`;
+}
+const raggruppa = (picks) => [["Molto probabili (80% o più)", picks.filter((x) => x.prob >= 0.8)], ["Probabili (70-80%)", picks.filter((x) => x.prob >= 0.7 && x.prob < 0.8)], ["Da valutare (sotto il 70%)", picks.filter((x) => x.prob < 0.7)]];
+
+// ---------- PARTITE
+async function vistaPartite(force) {
+  APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
+  let D; try { D = await dati(force); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
+  const top = (id) => D.picks.find((x) => x.g === id);
+  let h = topBar(D) + giorniChips();
+  if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
+  h += D.partite.map((p) => schedaPartita(D, p, top(p.id), true)).join("");
+  if (D.ieri.length) {
+    h += `<h2>Risultati di ieri</h2>` + D.ieri.map((p) => `<div class="card"><div class="riga"><div class="lg">${logo(p.trasf, 28)}<b>${esc(p.trasf)}</b></div><b style="font-size:18px">${p.ptTr} - ${p.ptCasa}</b><div class="lg"><b>${esc(p.casa)}</b>${logo(p.casa, 28)}</div></div></div>`).join("");
+  }
+  h += `<button class="btn" id="agg"><i class="ti ti-refresh"></i> Aggiorna ora</button>`;
+  APP.innerHTML = h; bindGiorni(); $("#agg").onclick = () => route(true);
+  if (D.partite.some((p) => p.stato === "in")) timer = setTimeout(() => { if (location.hash === "" || location.hash === "#/") route(true); }, 60000);
+}
+
+// ---------- COMBO
+async function vistaCombo(force) {
+  APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
+  let D; try { D = await dati(force); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
+  const gruppi = SC.map(([t, ic, tipi]) => [t, ic, D.picks.filter((x) => tipi.includes(x.tipo))]);
+  const scelte = gruppi.map((g) => g[2][0]).filter(Boolean);
+  let h = topBar(D) + giorniChips();
+  if (scelte.length) { const c = scelte.reduce((a, x) => a * x.prob, 1); h += `<div class="card riga" style="gap:14px;justify-content:flex-start">${anello(c * 100, OR, 76)}<div><div class="s">I primi di ogni riquadro, insieme</div><div style="font-weight:600;font-size:15px">Meglio non esagerare</div><div class="s">Stima con eventi indipendenti: più giocate unisci, meno è probabile.</div></div></div>`; }
+  h += `<div class="cap">Per ogni giocata l'app trova la soglia che si supera con probabilità di almeno il 70% secondo il modello. Le percentuali sono stime, non certezze.</div>`;
+  if (!D.partite.length) h += `<div class="vuoto">Nessuna partita per questo giorno.</div>`;
+  const ess = ls.get("ess", false);
+  h += `<label class="sw"><input type="checkbox" id="ess" ${ess ? "checked" : ""}> Vista essenziale (solo le giocate più forti)</label>`;
+  if (ess) {
+    const f = D.picks.filter((x) => x.prob >= 0.78).slice(0, 15);
+    h += f.length ? f.map((x) => `<div class="card riga" style="padding:8px 12px"><div class="lg" style="flex:1">${x.pid ? foto(x.pid, 30) : x.squadra ? logo(x.squadra, 26) : ""}<div style="min-width:0"><b>${esc(x.testo)}</b><div class="s">${esc(x.partita)}</div></div></div><b style="color:${GR}">${pct(x.prob)}</b></div>`).join("") : `<div class="vuoto">Nessuna giocata sopra il 78% per ora.</div>`;
+  } else {
+    for (const [t, ic, l] of gruppi) {
+      if (!l.length) continue;
+      h += `<div class="card box"><h3><i class="ti ${ic}"></i>${esc(t)}</h3>${l.slice(0, 3).map((x) => rigaPick(D, x)).join("")}</div>`;
+      if (l.length > 3) h += `<details><summary>Altre giocate: ${esc(t)} (${l.length - 3})</summary>${l.slice(3).map(cardPick).join("")}</details>`;
+    }
+    const tutti = D.partite.flatMap((p) => p.giocatori);
+    if (tutti.length) {
+      h += `<h2>I migliori della giornata</h2><div class="card">`;
+      for (const [m, c] of Object.entries(MERC)) {
+        h += `<div class="s" style="margin-top:8px">${m.toUpperCase()}</div>` + [...tutti].sort((a, b) => b[c.k].v - a[c.k].v).slice(0, 5).map((p, i) => `<div class="riga" style="padding:3px 0"><span>${i + 1}. <b style="color:${T(D, p.sq).c}">${esc(p.sq)}</b> ${esc(p.nome)}</span><b style="color:${i === 0 ? OR : "#f2f2f2"}">${p[c.k].v.toFixed(1)}</b></div>`).join("");
+      }
+      h += `</div>`;
+    }
+  }
+  APP.innerHTML = h; bindGiorni(); $("#ess").onchange = (e) => { ls.set("ess", e.target.checked); route(); };
+}
+
+// ---------- STUDIO PARTITA
+async function vistaStudio(id, force) {
+  APP.innerHTML = `<a class="back" href="#/"><i class="ti ti-chevron-left"></i>Partite</a>` + skel();
+  let D; try { D = await dati(force); } catch (e) { APP.innerHTML = `<a class="back" href="#/"><i class="ti ti-chevron-left"></i>Partite</a>` + errBox(e); return; }
+  const p = D.partite.find((x) => x.id === id);
+  if (!p) { APP.innerHTML = `<a class="back" href="#/"><i class="ti ti-chevron-left"></i>Partite</a><div class="vuoto">Partita non trovata per il giorno selezionato.</div>`; return; }
+  const picks = D.picks.filter((x) => x.g === id), r = p.r;
+  const mer = ls.get("mercato", "Punti");
+  let h = `<a class="back" href="#/"><i class="ti ti-chevron-left"></i>Partite</a>` + schedaPartita(D, p, picks[0], false);
+  h += `<h2>Giocate consigliate</h2>`;
+  if (!picks.length) h += `<div class="vuoto">Nessuna giocata sopra la soglia per questa partita.</div>`;
+  for (const [t, l] of raggruppa(picks)) if (l.length) h += `<div class="sub">${esc(t)}</div>` + l.map((x) => cardPick(x) + `<div class="cap">${esc(x.motivo)}</div>`).join("");
+  h += `<h2>Ultimi incontri</h2><div id="ultime"><div class="skel" style="height:90px"></div></div>`;
+  if (p.giocatori.length) {
+    h += `<h2>I migliori di ogni squadra</h2>`;
+    for (const sq of [p.casa, p.trasf]) {
+      const ds = p.giocatori.filter((x) => x.sq === sq);
+      h += `<div class="card"><div class="lg" style="margin-bottom:6px">${logo(sq, 26)}<b>${esc(T(D, sq).n)}</b></div>` + Object.entries(MERC).map(([m, c]) => `<div class="s" style="margin-top:8px">${m.toUpperCase()}</div>` + [...ds].sort((a, b) => b[c.k].v - a[c.k].v).slice(0, 3).map((x, i) => `<div class="riga" style="padding:2px 0"><span>${i + 1}. ${esc(x.nome)}</span><b style="color:${i === 0 ? OR : "#f2f2f2"}">${x[c.k].v.toFixed(1)}</b></div>`).join("")).join("") + `</div>`;
+    }
+  }
+  const lt = D.linee["tot_" + p.casa], lineaT = ls.get("L_tot_" + id, lt ?? "");
+  h += `<h2>Totale e spread</h2><div class="card"><div class="s">Over/Under (punti totali)</div>${gauge(r.totale, lineaT)}<div id="totp" class="s"></div><input class="linea" id="lt" inputmode="decimal" placeholder="Linea Over/Under (es. 224.5)" value="${esc(lineaT)}"></div>`;
+  if (p.giocatori.length) {
+    h += `<h2>Giocatori</h2><div class="tabs">${Object.keys(MERC).map((m) => `<button class="chipbtn${m === mer ? " on" : ""}" data-m="${m}">${m}</button>`).join("")}</div>`;
+    const c = MERC[mer];
+    for (const sq of [p.casa, p.trasf]) {
+      h += `<div class="sub">${esc(T(D, sq).n)}</div>`;
+      h += p.giocatori.filter((x) => x.sq === sq).slice(0, 10).map((x) => schedaGiocatore(D, id, x, mer, c)).join("");
+    }
+  }
+  if (p.inf && p.inf.length) h += `<h2>Infortuni segnalati</h2>` + p.inf.map((i) => `<div class="card" style="padding:9px 12px"><b>${esc(i.nome)}</b> <span class="s">(${esc(T(D, i.sq).b)})</span> <span style="color:${i.stato === "out" ? RD : AM}">${i.stato === "out" ? "Out, escluso dai calcoli" : "Dubbio, ancora incluso"}</span><div class="s">${esc(i.dettaglio)}</div></div>`).join("");
+  const note = ["Infortuni: l'app legge l'elenco di ESPN ed esclude chi è «out». Controlla le ultime notizie e le formazioni poco prima della partita.", "Riposo: è considerato solo il back-to-back (squadra che ha giocato ieri, circa un punto in meno).", "Rimbalzi e assist: stima semplice basata sulla media e sul ritmo di gioco, meno precisa dei punti.", "La forma recente non è disponibile con questa fonte: le stime dei giocatori usano la media stagionale."];
+  if (Math.abs(r.margine) >= 10) note.push("Margine stimato ampio: nei finali sbilanciati i titolari possono giocare meno minuti, con rischio per gli over sui giocatori.");
+  if (Math.abs(r.margine) < 3) note.push("Partita molto equilibrata: lo spread è poco affidabile, conta di più il totale.");
+  for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) note.push(`${T(D, s).b} ha giocato ieri: stima ridotta di circa 1.2 punti.`);
+  h += `<h2>Da controllare prima di decidere</h2><div class="cap" style="display:grid;gap:6px">${note.map((n) => `<div>• ${esc(n)}</div>`).join("")}</div>`;
+  APP.innerHTML = h;
+  aggiornaTot(r);
+  $("#lt").oninput = (e) => { ls.set("L_tot_" + id, e.target.value); aggiornaTot(r); };
+  APP.querySelectorAll("[data-m]").forEach((b) => b.onclick = () => { ls.set("mercato", b.dataset.m); vistaStudio(id); });
+  APP.querySelectorAll("input[data-lk]").forEach((i) => i.oninput = () => { ls.set("L_" + i.dataset.lk, i.value); probLinea(i); });
+  APP.querySelectorAll("input[data-lk]").forEach(probLinea);
+  Promise.all([p.casa, p.trasf].map((s) => api("/api/ultime?s=" + s, 600000).catch(() => null))).then((res) => {
+    const el = $("#ultime"); if (!el) return;
+    el.innerHTML = res.map((x, i) => ultimeHtml(D, [p.casa, p.trasf][i], x && x.ultime)).join("");
+  });
+}
+function gauge(stima, linea) {
+  const lo = stima - 20, hi = stima + 20, pp = (v) => Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100));
+  const l = parseFloat(linea);
+  return `<div class="gauge">${l ? `<div class="l" style="left:${pp(l)}%"></div>` : ""}<div class="m" style="left:${pp(stima)}%"></div></div><div class="s">Stima ${stima.toFixed(1)}${l ? ` · linea ${l}` : ""}</div>`;
+}
+function aggiornaTot(r) {
+  const el = $("#totp"), v = parseFloat($("#lt").value);
+  if (!el) return;
+  if (!v) { el.textContent = `Senza linea: punti totali stimati ${r.totale.toFixed(1)}. Inserisci la linea per ottenere le probabilità.`; return; }
+  const po = 1 - phi((v - r.totale) / 17);
+  el.innerHTML = `Over ${v}: <b style="color:${po >= 0.7 ? GR : po >= 0.5 ? OR : MU}">${pct(po)}</b> · Under: <b style="color:${1 - po >= 0.7 ? GR : 1 - po >= 0.5 ? OR : MU}">${pct(1 - po)}</b>`;
+}
+function schedaGiocatore(D, gid, x, mer, c) {
+  const o = x[c.k], dub = x.inf === "dubbio" ? `<span class="pill" style="color:${AM};margin-left:6px">Dubbio</span>` : "";
+  const tile = (n, v, on) => `<div class="tile${on ? " on" : ""}"><b>${v.toFixed(1)}</b><span>${n}</span></div>`;
+  const rec = o.rec != null ? `<div style="margin-top:10px"><span class="s">CONSIGLIATO</span><div style="font-weight:600;color:${GR}">over ${o.rec} ${c.u} · ${pct(o.lad.find((q) => q[0] === o.rec)[1])}</div></div>` : `<div class="s" style="margin-top:10px">Nessuna soglia sopra il 70%: giocatore poco sicuro.</div>`;
+  const lad = o.lad.map(([t, pr]) => { const col = pr >= 0.7 ? GR : pr >= 0.5 ? AM : MU; return `<span style="color:${col};${t === o.rec ? "border:1px solid " + col : ""}">over ${t} · ${pct(pr)}</span>`; }).join("");
+  const key = `${gid}_${x.pid || x.nome}_${mer}`;
+  return `<div class="card pl"><div class="lg">${foto(x.pid, 48)}<div style="min-width:0"><div class="tn">${esc(x.nome)}${dub}</div><div class="s">${esc(x.sq)} · ${Math.round(x.min)} min</div></div></div>
+  <div class="row3">${tile("Punti", x.pts.v, mer === "Punti")}${tile("Rimbalzi", x.reb.v, mer === "Rimbalzi")}${tile("Assist", x.ast.v, mer === "Assist")}</div>${rec}
+  <div class="s" style="margin-top:8px">ALTRE SOGLIE POSSIBILI</div><div class="lad">${lad}</div>
+  <input class="linea" inputmode="decimal" placeholder="Tua linea ${mer.toLowerCase()} (es. ${(Math.round(o.v * 2) / 2)})" data-lk="${esc(key)}" data-v="${o.v}" data-sd="${o.sd}" value="${esc(ls.get("L_" + key, ""))}"><div class="s" data-lp="${esc(key)}"></div></div>`;
+}
+function probLinea(i) {
+  const el = APP.querySelector(`[data-lp="${CSS.escape(i.dataset.lk)}"]`); if (!el) return;
+  const l = parseFloat(i.value); if (!l) { el.textContent = ""; return; }
+  const po = 1 - phi((l - +i.dataset.v) / +i.dataset.sd);
+  el.innerHTML = `Over ${l}: <b style="color:${po >= 0.7 ? GR : po >= 0.5 ? OR : MU}">${pct(po)}</b> · Under: <b>${pct(1 - po)}</b>`;
+}
+function ultimeHtml(D, sig, ul) {
+  if (!ul || !ul.length) return `<div class="cap">Ultimi incontri di ${esc(sig)} non disponibili.</div>`;
+  const m = (f) => ul.reduce((a, x) => a + f(x), 0) / ul.length;
+  return `<div class="card"><div class="riga"><div class="lg">${logo(sig, 30)}<b>${esc(T(D, sig).n)}</b></div><div>${ul.map((x) => `<span class="fm" style="background:${x.vinta ? GR : RD}">${x.vinta ? "V" : "S"}</span>`).join("")}</div></div><div class="s" style="margin:6px 0 8px">Ultime ${ul.length}: ${m((x) => x.pf).toFixed(1)} fatti, ${m((x) => x.pa).toFixed(1)} subiti · totale ${m((x) => x.pf + x.pa).toFixed(1)}</div>` +
+    ul.map((x) => `<div class="riga rg"><div class="lg">${logo(x.avv, 22)}<div><div style="font-weight:500">${x.casa ? "vs" : "@"} ${esc((D.squadre[x.avv] || { b: x.avv }).b)}</div><div class="s">${esc(x.data)}</div></div></div><b style="color:${x.vinta ? GR : RD}">${x.pf}-${x.pa}</b></div>`).join("") + `</div>`;
+}
+
+// ---------- ESITI e STORICO
+function barraPerc(t, k, n, att) { const p = n ? k / n * 100 : 0; return `<div class="card pc"><div class="s">${esc(t)}</div><b>${k}/${n}</b> <span class="s">(${p.toFixed(0)}%${att != null ? " · previsto " + pct(att) : ""})</span><div class="mini"><i style="width:${p.toFixed(0)}%;background:${p >= 60 ? GR : RD}"></i></div></div>`; }
+function rigaEsito(r) {
+  const [s, c] = { 1: ["✓", GR], 0: ["✗", RD], 2: ["–", MU] }[r.esito];
+  return `<div class="card riga" style="padding:10px 12px;gap:10px;justify-content:flex-start"><div style="width:28px;height:28px;border-radius:50%;background:${c}22;color:${c};display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">${s}</div><div style="min-width:0;flex:1"><div style="font-weight:500">${esc(r.testo)}</div><div class="s">${esc(r.partita)} · ${esc(r.dettaglio || "")}</div></div><div class="s">${pct(r.prob)}</div></div>`;
+}
+async function vistaEsiti() {
+  APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
+  let E; try { E = await api("/api/esiti?g=" + giorno, 60000); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
+  const ris = E.risultati, val = ris.filter((x) => x.esito !== 2);
+  let h = topBar() + giorniChips();
+  if (!val.length) h += `<div class="vuoto">Nessuna partita finita da verificare per questo giorno. Torna a partite concluse.</div>`;
+  else {
+    const ok = val.filter((x) => x.esito === 1).length, p = ok / val.length * 100;
+    h += `<div class="card riga" style="gap:14px;justify-content:flex-start">${anello(p, p >= 60 ? GR : OR, 76)}<div><div class="s">Consigli delle partite finite</div><div style="font-size:20px;font-weight:600">${ok} su ${val.length} azzeccati</div><div class="s">${ris.length - val.length} non validi (giocatore fermo o dato mancante)</div></div></div>`;
+    h += `<div class="grid2">${SC.map(([t, , tipi]) => { const v = val.filter((x) => tipi.includes(x.tipo)); return v.length ? barraPerc(t, v.filter((x) => x.esito === 1).length, v.length) : ""; }).join("")}</div>`;
+    for (const [t, c] of [["Azzeccati", 1], ["Sbagliati", 0]]) { const l = val.filter((x) => x.esito === c); if (l.length) h += `<h2>${t} (${l.length})</h2>` + l.map(rigaEsito).join(""); }
+    const nulli = ris.filter((x) => x.esito === 2);
+    if (nulli.length) h += `<details><summary>Non validi (${nulli.length})</summary>${nulli.map(rigaEsito).join("")}</details>`;
+    h += `<div class="cap">I consigli sono ricalcolati con le statistiche attuali. Per il registro vero guarda «Storico».</div>`;
+  }
+  APP.innerHTML = h; bindGiorni();
+}
+async function vistaStorico() {
+  APP.innerHTML = topBar() + skel();
+  let S; try { S = await api("/api/storico", 0); } catch (e) { APP.innerHTML = topBar() + errBox(e); return; }
+  let h = topBar();
+  if (!S.attivo) h += `<div class="vuoto">Il registro non è ancora attivo: servono i segreti SUPABASE_URL e SUPABASE_KEY nel progetto Cloudflare.</div>`;
+  else {
+    const val = S.righe.filter((r) => r.esito === 0 || r.esito === 1), att = S.righe.filter((r) => r.esito == null).length;
+    if (!val.length) h += `<div class="vuoto">Nessun esito ancora: ${S.righe.length} consigli salvati, ${att} in attesa che le partite finiscano. Apri l'app prima delle partite e dopo la fine.</div>`;
+    else {
+      const ok = val.filter((r) => r.esito === 1).length, p = ok / val.length * 100, at = val.reduce((a, r) => a + r.prob, 0) / val.length;
+      h += `<div class="card riga" style="gap:14px;justify-content:flex-start">${anello(p, p >= 60 ? GR : OR, 76)}<div><div class="s">Storico dei consigli salvati</div><div style="font-size:20px;font-weight:600">${ok} su ${val.length} azzeccati</div><div class="s">Il modello prevedeva in media il ${pct(at)} · ${att} in attesa</div></div></div>`;
+      const sub = (l) => [l.filter((r) => r.esito === 1).length, l.length, l.reduce((a, r) => a + r.prob, 0) / l.length];
+      h += `<h2>Per categoria</h2><div class="grid2">${SC.map(([t, , tipi]) => { const l = val.filter((r) => tipi.includes(r.tipo)); return l.length ? barraPerc(t, ...sub(l)) : ""; }).join("")}</div>`;
+      h += `<h2>Calibrazione</h2><div class="grid2">${[[0.7, 0.75, "70-75%"], [0.75, 0.8, "75-80%"], [0.8, 0.85, "80-85%"], [0.85, 1.01, "85% e oltre"]].map(([a, b, n]) => { const l = val.filter((r) => r.prob >= a && r.prob < b); return l.length ? barraPerc(n, ...sub(l)) : ""; }).join("")}</div><div class="cap">Se in una fascia la percentuale reale è molto più bassa di quella prevista, il modello è troppo ottimista lì.</div>`;
+      h += `<h2>Ultimi esiti</h2>` + val.slice(0, 30).map(rigaEsito).join("");
+    }
+  }
+  APP.innerHTML = h;
+}
+
+// ---------- router
+let timer = null;
+function route(force) {
+  clearTimeout(timer);
+  const hsh = location.hash.replace(/^#/, "") || "/";
+  const attivo = hsh.startsWith("/combo") ? "combo" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : "partite";
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
+  const m = /^\/partita\/(\d+)/.exec(hsh);
+  if (m) vistaStudio(m[1], force === true);
+  else if (attivo === "combo") vistaCombo(force === true);
+  else if (attivo === "esiti") vistaEsiti();
+  else if (attivo === "storico") vistaStorico();
+  else vistaPartite(force === true);
+  if (!m) window.scrollTo(0, 0);
+}
+window.route = route;
+window.addEventListener("hashchange", () => route());
+document.addEventListener("visibilitychange", () => { if (!document.hidden && !location.hash.startsWith("#/partita")) route(); });
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+route();
