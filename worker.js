@@ -8,7 +8,7 @@ const ERR = (m, s = 500) => new Response(JSON.stringify({ errore: m }), { status
 // ---- Supabase (secrets SUPABASE_URL e SUPABASE_KEY)
 const dbOk = (env) => !!(env.SUPABASE_URL && env.SUPABASE_KEY);
 async function db(env, metodo, { params, corpo, prefer } = {}) {
-  const u = new URL(`${env.SUPABASE_URL.replace(/\/$/, "")}/rest/v1/consigli`);
+  const u = new URL(`${env.SUPABASE_URL.replace(/\/$/, "")}/rest/v1/nba_consigli`);
   for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
   const h = { apikey: env.SUPABASE_KEY, Authorization: `Bearer ${env.SUPABASE_KEY}`, "Content-Type": "application/json" };
   if (prefer) h.Prefer = prefer;
@@ -30,9 +30,9 @@ function costruisci(partite, teams, players, infortuni, b2b) {
   return out;
 }
 
-async function apiGiorno(env, ctx, offset) {
+async function apiGiorno(env, ctx, offset, data = null) {
   const errori = [];
-  const [g, stat] = await Promise.all([caricaGiorno(offset), caricaStatistiche()]);
+  const [g, stat] = await Promise.all([caricaGiorno(offset, data), caricaStatistiche()]);
   let infortuni = {};
   try { infortuni = await caricaInfortuni(); } catch (e) { errori.push("infortuni: " + e.message); }
   const b2b = [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))];
@@ -63,8 +63,8 @@ async function apiGiorno(env, ctx, offset) {
 }
 
 // partite finite -> consigli ricalcolati e confrontati con i risultati
-async function apiEsiti(offset) {
-  const g = await caricaGiorno(offset), stat = await caricaStatistiche();
+async function apiEsiti(offset, data = null) {
+  const g = await caricaGiorno(offset, data), stat = await caricaStatistiche();
   const finite = [...g.ieri, ...g.partite.filter((p) => p.stato === "post")];
   const gare = costruisci(finite, stat.teams, stat.players, {}, []);
   const picks = consigli(gare);
@@ -137,8 +137,9 @@ export default {
     try {
       const off = Math.max(-2, Math.min(3, parseInt(url.searchParams.get("g") || "0") || 0));
       if (p === "/api/live") { const d = await apiLive(); for (const q of d.prossime) { d.squadre[q.casa] = info(q.casa); d.squadre[q.trasf] = info(q.trasf); } return J(d, 10); }
-      if (p === "/api/giorno") return J(await apiGiorno(env, ctx, off), 45);
-      if (p === "/api/esiti") return J(await apiEsiti(off), 120);
+      const dp = url.searchParams.get("d"), data = dp && /^\d{8}$/.test(dp) ? dp : null;
+      if (p === "/api/giorno") return J(await apiGiorno(env, ctx, off, data), 45);
+      if (p === "/api/esiti") return J(await apiEsiti(off, data), 120);
       if (p === "/api/storico") return J(await apiStorico(env));
       if (p === "/api/ultime") { const s = (url.searchParams.get("s") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(s)) return ERR("sigla non valida", 400); return J({ s, ultime: await caricaUltime(s) }, 600); }
       return ERR("non trovato", 404);
