@@ -17,6 +17,11 @@ const pct = (p) => Math.round(p * 100) + "%";
 let giorno = ls.get("giorno", 0);
 if (typeof giorno !== "number" && !/^\d{8}$/.test(String(giorno))) giorno = 0;
 const cache = {};
+function salvaLocale(k, d) {
+  const val = JSON.stringify({ t: Date.now(), d });
+  try { localStorage.setItem("D|" + k, val); } catch { try { Object.keys(localStorage).filter((x) => x.startsWith("D|")).forEach((x) => localStorage.removeItem(x)); localStorage.setItem("D|" + k, val); } catch {} }
+}
+function cacheLocale(k) { try { const o = JSON.parse(localStorage.getItem("D|" + k) || "null"); return o && Date.now() - o.t < 12 * 3600e3 ? o.d : null; } catch { return null; } }
 async function api(path, ttl = 0) {
   const c = cache[path];
   if (c && Date.now() - c.t < ttl) return c.d;
@@ -24,6 +29,7 @@ async function api(path, ttl = 0) {
   const d = await r.json();
   if (!r.ok || d.errore) throw new Error(d.errore || "Errore " + r.status);
   cache[path] = { t: Date.now(), d };
+  if (path.startsWith("/api/giorno")) salvaLocale(path, d);
   return d;
 }
 const qs = () => "d=" + (typeof giorno === "number" ? etGiorno(giorno).ymd : giorno);
@@ -86,6 +92,7 @@ function schedaPartita(D, p, topPick, cliccabile) {
   let chips = `<span class="chip">Totale ${r.totale.toFixed(1)}</span><span class="chip">Spread ${esc(T(D, fav).b)} -${Math.abs(r.margine).toFixed(1)}</span>`;
   if (topPick) chips += `<span class="chip" style="color:${GR}">Top: ${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
+  if (p.fs) for (const [s, f] of [[p.trasf, p.fs.trasf], [p.casa, p.fs.casa]]) if (f && f.n >= 5) chips += `<span class="chip">${esc(T(D, s).b)} ultime ${f.n}: ${f.v}V · ${f.pf.toFixed(0)}-${f.pa.toFixed(0)}</span>`;
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
   return `<${tag} class="card gm${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
   <div class="riga" style="margin-bottom:10px"><span class="pill" data-pill style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>
@@ -149,8 +156,13 @@ function seguiPunteggi(D) {
   timer = setTimeout(giro, 10000);
 }
 async function vistaPartite(force) {
-  APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
-  let D; try { D = await dati(force); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
+  // mostra subito l'ultimo giorno salvato sul telefono, poi lo aggiorna
+  const salvato = force ? null : cacheLocale("/api/giorno?" + qs());
+  if (salvato) disegnaPartite(salvato, false); else { APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni(); }
+  let D; try { D = await dati(force); } catch (e) { if (!salvato) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); } return; }
+  if (!location.hash.replace(/^#/, "").replace(/^\//, "")) { const y = window.scrollY; disegnaPartite(D, true); if (salvato) window.scrollTo(0, y); }
+}
+function disegnaPartite(D, conPoll) {
   const top = (id) => D.picks.find((x) => x.g === id);
   let h = topBar(D) + giorniChips();
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
@@ -165,7 +177,50 @@ async function vistaPartite(force) {
   }
   h += `<button class="btn" id="agg"><i class="ti ti-refresh"></i> Aggiorna ora</button>`;
   APP.innerHTML = h; bindGiorni(); $("#agg").onclick = () => route(true);
-  seguiPunteggi(D);
+  if (conPoll) seguiPunteggi(D);
+}
+
+// ---------- REGISTRO PERSONALE (salvato sul telefono)
+const chiaveGiocata = (x) => `${x.g}|${x.tipo}|${x.pid || x.squadra || (x.tipo === "Totale" ? x.testo : "")}`;
+const eur = (v) => (v >= 0 ? "+" : "-") + Math.abs(v).toFixed(2).replace(".", ",") + " €";
+function btnRegistro(o) {
+  const gia = ls.get("registro", []).some((r) => r.id === o.id);
+  return `<button class="btn regbtn" data-reg="${esc(JSON.stringify(o))}" style="margin:8px 0 0">${gia ? `<i class="ti ti-check"></i> Nel registro` : `<i class="ti ti-notebook"></i> Ho giocato questa`}</button><div class="regform" style="display:none"></div>`;
+}
+function bindRegistro() {
+  APP.querySelectorAll(".regbtn").forEach((b) => b.onclick = () => {
+    const o = JSON.parse(b.dataset.reg), f = b.nextElementSibling;
+    if (ls.get("registro", []).some((r) => r.id === o.id)) { location.hash = "#/registro"; return; }
+    f.style.display = "block";
+    f.innerHTML = `<div class="grid2"><input class="linea" inputmode="decimal" placeholder="Quota (es. 2.10)" data-q><input class="linea" inputmode="decimal" placeholder="Puntata in € (es. 5)" data-p></div><button class="btn" data-ok style="margin:0 0 6px">Salva nel registro</button>`;
+    f.querySelector("[data-ok]").onclick = () => {
+      const q = parseFloat(String(f.querySelector("[data-q]").value).replace(",", ".")), p = parseFloat(String(f.querySelector("[data-p]").value).replace(",", "."));
+      if (!(q > 1) || !(p > 0)) { f.querySelector("[data-ok]").textContent = "Inserisci quota (maggiore di 1) e puntata"; return; }
+      const r = ls.get("registro", []); r.unshift({ ...o, quota: q, puntata: p, data: new Date().toISOString().slice(0, 10), esito: null }); ls.set("registro", r);
+      b.innerHTML = `<i class="ti ti-check"></i> Nel registro`; f.style.display = "none";
+    };
+  });
+}
+async function vistaRegistro() {
+  const back = `<a class="back" href="#/storico"><i class="ti ti-chevron-left"></i>Storico</a>`;
+  APP.innerHTML = back + skel();
+  let reg = ls.get("registro", []);
+  if (reg.some((r) => r.esito == null)) {
+    try {
+      const S = await api("/api/storico", 0), m = new Map([...(S.schedine || []), ...(S.righe || [])].map((r) => [r.chiave, r.esito]));
+      reg = reg.map((r) => { const e = m.get(r.chiave); return r.esito == null && (e === 0 || e === 1) ? { ...r, esito: e } : r; }); ls.set("registro", reg);
+    } catch {}
+  }
+  const chiuse = reg.filter((r) => r.esito === 0 || r.esito === 1), vinte = chiuse.filter((r) => r.esito === 1);
+  const prof = chiuse.reduce((a, r) => a + (r.esito === 1 ? r.puntata * (r.quota - 1) : -r.puntata), 0), puntato = chiuse.reduce((a, r) => a + r.puntata, 0);
+  let h = back + `<h2>Il mio registro</h2>`;
+  if (!reg.length) h += `<div class="vuoto">Ancora vuoto. Nelle pagine Schedine e Studio tocca «Ho giocato questa», scrivi quota e puntata: a fine partita l'app calcola da sola guadagno e perdita. Resta salvato solo su questo telefono.</div>`;
+  else {
+    h += `<div class="card riga" style="gap:14px;justify-content:flex-start"><div><div class="s">Risultato delle giocate chiuse</div><div style="font-family:'Barlow Condensed',Inter,sans-serif;font-size:36px;font-weight:700;color:${prof >= 0 ? GR : RD}">${chiuse.length ? eur(prof) : "–"}</div><div class="s">${vinte.length} centrate su ${chiuse.length}${puntato ? ` · rendimento ${(prof / puntato * 100).toFixed(0)}% su ${puntato.toFixed(2).replace(".", ",")} € puntati` : ""} · ${reg.length - chiuse.length} in attesa</div></div></div>`;
+    h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div><div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div></div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div></div>`).join("");
+  }
+  APP.innerHTML = h;
+  APP.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => { const r = ls.get("registro", []); r.splice(+b.dataset.del, 1); ls.set("registro", r); vistaRegistro(); });
 }
 
 // ---------- GIOCATORE
@@ -200,7 +255,7 @@ function cardSchedina(s) {
   return `<div class="card sch" style="border-top:3px solid ${col}"><div class="riga" style="align-items:flex-start"><div><div class="sn"><i class="ti ${ic}" style="color:${col}"></i> ${esc(s.nome)}</div><div class="s">${esc(s.sotto)}</div></div><div style="text-align:right"><div class="sp" style="color:${col}">${pct(s.prob)}</div><div class="s">tutte centrate</div></div></div>
   <div style="margin:10px 0 4px">${s.legs.map((l) => `<div class="leg">${l.pid ? foto(l.pid, 32) : l.squadra ? logo(l.squadra, 28) : `<span class="ph" style="width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-chart-bar" style="color:${OR}"></i></span>`}<div style="min-width:0;flex:1"><div style="font-weight:600">${esc(l.testo)}</div><div class="s">${esc(l.partita)} · ${esc(l.ora)}</div></div><b style="color:${colProb(l.prob)}">${pct(l.prob)}</b></div>`).join("")}</div>
   <div class="s" style="line-height:1.5">Quota giusta per questa probabilità: <b style="color:#f2f2f2">${s.quotaEqua.toFixed(2)}</b>. Ha senso solo se il tuo bookmaker ne offre di più.${s.stessaPartita ? ` <span style="color:${AM}">Alcune giocate sono della stessa partita, quindi la probabilità reale è diversa.</span>` : ""}</div>
-  <button class="btn cp" data-cp="${esc(testoSchedina(s))}" style="margin:10px 0 0"><i class="ti ti-copy"></i> Copia la schedina</button></div>`;
+  <button class="btn cp" data-cp="${esc(testoSchedina(s))}" style="margin:10px 0 0"><i class="ti ti-copy"></i> Copia la schedina</button>${btnRegistro({ id: s.chiave, chiave: s.chiave, nome: s.nome, testo: s.legs.map((l) => l.testo).join(" + "), prob: s.prob })}</div>`;
 }
 async function vistaSchedine(force) {
   APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
@@ -211,9 +266,9 @@ async function vistaSchedine(force) {
   if (!sc.length) h += `<div class="vuoto">Per questo giorno non ci sono abbastanza partite da giocare o giocate sopra la soglia. Le proposte compaiono prima dell'inizio delle partite.</div>`;
   h += sc.map(cardSchedina).join("");
   const singola = D.picks.find((x) => D.partite.find((p) => p.id === x.g && p.stato === "pre"));
-  if (singola) h += `<h2>Singola del giorno</h2><div class="card riga" style="gap:12px;border-top:3px solid ${GR}">${anello(singola.prob * 100, colProb(singola.prob), 64)}<div style="min-width:0;flex:1"><div style="font-weight:600;font-size:16px">${esc(singola.testo)}</div><div class="s">${esc(singola.partita)} · stima ${esc(singola.stima)}</div></div></div><div class="cap">${esc(singola.motivo)}</div>`;
+  if (singola) h += `<h2>Singola del giorno</h2><div class="card riga" style="gap:12px;border-top:3px solid ${GR}">${anello(singola.prob * 100, colProb(singola.prob), 64)}<div style="min-width:0;flex:1"><div style="font-weight:600;font-size:16px">${esc(singola.testo)}</div><div class="s">${esc(singola.partita)} · stima ${esc(singola.stima)}</div></div></div>${btnRegistro({ id: chiaveGiocata(singola), chiave: chiaveGiocata(singola), nome: "Singola", testo: singola.testo, prob: singola.prob })}<div class="cap">${esc(singola.motivo)}</div>`;
   h += `<div class="cap">Più giocate unisci, meno la schedina è probabile: tre giocate al 80% insieme valgono circa il 51%.</div>`;
-  APP.innerHTML = h; bindGiorni();
+  APP.innerHTML = h; bindGiorni(); bindRegistro();
   APP.querySelectorAll(".cp").forEach((b) => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.cp); b.innerHTML = `<i class="ti ti-check"></i> Copiata`; } catch { b.textContent = "Copia non riuscita"; } });
 }
 
@@ -445,6 +500,16 @@ async function vistaLive(primo = true) {
 
 // ---------- ESITI e STORICO
 function barraPerc(t, k, n, att) { const p = n ? k / n * 100 : 0; return `<div class="card pc"><div class="s">${esc(t)}</div><b>${k}/${n}</b> <span class="s">(${p.toFixed(0)}%${att != null ? " · previsto " + pct(att) : ""})</span><div class="mini"><i style="width:${p.toFixed(0)}%;background:${p >= 60 ? GR : RD}"></i></div></div>`; }
+function precisioneModello(S) {
+  const nomi = { Totale: "Punti totali della partita", Squadra: "Punti di una squadra", Punti: "Punti di un giocatore", Rimbalzi: "Rimbalzi", Assist: "Assist" }, per = {};
+  for (const r of S.righe || []) {
+    if (r.esito !== 0 && r.esito !== 1 || !nomi[r.tipo]) continue;
+    const st = parseFloat(r.stima), m = /fatto (-?\d+(?:\.\d+)?)/.exec(r.dettaglio || ""); if (!Number.isFinite(st) || !m) continue;
+    const c = (per[r.tipo] ||= { n: 0, ae: 0, e: 0 }); c.n++; c.ae += Math.abs(st - +m[1]); c.e += st - +m[1];
+  }
+  const l = Object.entries(per).filter(([, c]) => c.n >= 3); if (!l.length) return "";
+  return `<h2>Precisione del modello</h2><div class="grid2">` + l.map(([t, c]) => `<div class="card pc"><div class="s">${esc(nomi[t])}</div><b>±${(c.ae / c.n).toFixed(1)}</b> <span class="s">di errore medio</span><div class="s">${c.n} giocate · ${Math.abs(c.e / c.n) < 0.5 ? "nessuna tendenza" : c.e > 0 ? "stima in media " + (c.e / c.n).toFixed(1) + " in più del reale" : "stima in media " + (-c.e / c.n).toFixed(1) + " in meno del reale"}</div></div>`).join("") + `</div><div class="cap">Confronta la stima dell'app con quello che è successo davvero nelle giocate già chiuse.</div>`;
+}
 function schedineStorico(S) {
   const l = (S.schedine || []); if (!l.length) return "";
   const ris = l.filter((r) => r.esito === 0 || r.esito === 1), att = l.length - ris.length;
@@ -493,7 +558,8 @@ async function vistaStorico() {
       h += `<h2>Ultimi esiti</h2>` + val.slice(0, 30).map(rigaEsito).join("");
     }
   }
-  h += schedineStorico(S);
+  h += precisioneModello(S) + schedineStorico(S);
+  h += `<div class="cap" style="text-align:center;margin-top:14px"><a href="#/registro" style="color:${OR}"><i class="ti ti-notebook"></i> Il mio registro (quote e puntate)</a></div>`;
   h += `<div class="cap" style="text-align:center;margin-top:18px"><a href="#/diag" style="color:${OR}"><i class="ti ti-stethoscope"></i> Controllo dei dati</a></div>`;
   APP.innerHTML = h;
 }
@@ -513,10 +579,11 @@ let timer = null;
 function route(force) {
   clearTimeout(timer);
   const hsh = location.hash.replace(/^#/, "") || "/";
-  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") ? "partite" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") ? "storico" : "partite";
+  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") ? "partite" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const m = /^\/partita\/(\d+)/.exec(hsh), gp = /^\/giocatore\/(\d+)/.exec(hsh);
-  if (gp) vistaGiocatore(gp[1]);
+  if (hsh.startsWith("/registro")) vistaRegistro();
+  else if (gp) vistaGiocatore(gp[1]);
   else if (m) vistaStudio(m[1], force === true);
   else if (attivo === "live") vistaLive(true);
   else if (attivo === "schedine") vistaSchedine(force === true);

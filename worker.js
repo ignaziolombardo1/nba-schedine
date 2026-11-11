@@ -19,10 +19,21 @@ async function db(env, metodo, { params, corpo, prefer, tabella = "nba_consigli"
 }
 
 const chiaveGiocata = (x) => `${x.g}|${x.tipo}|${x.pid || x.squadra || (x.tipo === "Totale" ? x.testo : "")}`;
-function costruisci(partite, teams, players, infortuni, b2b, forma = {}, quote = null, linee = {}) {
+// Forma delle squadre: stagione 65-70%, ultime 10 partite, e (se ci sono almeno 3 gare) rendimento in casa/in trasferta
+function teamsConForma(teams, fs, casa, trasf) {
+  const out = { ...teams };
+  for (const [sq, v] of [[casa, "c"], [trasf, "t"]]) {
+    const f = fs && fs[sq], T = teams[sq]; if (!f || f.n < 5 || !T) continue;
+    const ven = f["n" + v] >= 3 ? { pf: f["pf" + v], pa: f["pa" + v] } : null, pe = ven ? [0.65, 0.25, 0.10] : [0.70, 0.30, 0];
+    out[sq] = { pf: pe[0] * T.pf + pe[1] * f.pf + (ven ? pe[2] * ven.pf : 0), pa: pe[0] * T.pa + pe[1] * f.pa + (ven ? pe[2] * ven.pa : 0) };
+  }
+  return out;
+}
+function costruisci(partite, teams0, players, infortuni, b2b, forma = {}, quote = null, linee = {}, fsq = null) {
   const out = [];
   for (const p of partite) {
-    if (!teams[p.casa] || !teams[p.trasf]) continue;
+    if (!teams0[p.casa] || !teams0[p.trasf]) continue;
+    const teams = teamsConForma(teams0, fsq, p.casa, p.trasf);
     // le quote prepartita si usano solo per le partite non ancora iniziate
     const k = chiaveGara(p.casa, p.trasf), usa = quote && p.stato === "pre";
     let qg = usa ? (quote.giochi || {})[k] : null; const qp = usa ? (quote.props || {})[k] : null;
@@ -35,7 +46,7 @@ function costruisci(partite, teams, players, infortuni, b2b, forma = {}, quote =
     const giocatori = players.length ? [...proiettaGiocatori(p.casa, p.trasf, teams, players, infortuni, forma, r.margine, qp), ...proiettaGiocatori(p.trasf, p.casa, teams, players, infortuni, forma, -r.margine, qp)] : [];
     const inf = players.filter((q) => (q.sq === p.casa || q.sq === p.trasf) && q.min >= 20 && infortuni[q.nome.trim().toLowerCase()])
       .map((q) => ({ nome: q.nome, sq: q.sq, ...infortuni[q.nome.trim().toLowerCase()] }));
-    out.push({ ...p, r, giocatori, inf });
+    out.push({ ...p, r, giocatori, inf, fs: fsq ? { casa: fsq[p.casa] || null, trasf: fsq[p.trasf] || null } : null });
   }
   return out;
 }
@@ -56,9 +67,9 @@ async function leggiForma(env) {
   if (!dbOk(env)) return { mappa: {}, stato: null };
   try {
     const righe = await db(env, "GET", { tabella: "nba_forma", params: { select: "pid,dati,agg", limit: "3000" } });
-    const mappa = {}; let stato = null, quote = null, calib = null, avvisi = null;
-    for (const r of righe) { if (r.pid === "_stato") stato = r.dati; else if (r.pid === "_quote") quote = r.dati; else if (r.pid === "_calib") calib = r.dati; else if (r.pid === "_avvisi") avvisi = r.dati; else if (!r.pid.startsWith("_")) mappa[r.pid] = r.dati; }
-    return { mappa, stato, quote, calib, avvisi, n: Object.keys(mappa).length };
+    const mappa = {}; let stato = null, quote = null, calib = null, avvisi = null, squadre = null;
+    for (const r of righe) { if (r.pid === "_stato") stato = r.dati; else if (r.pid === "_quote") quote = r.dati; else if (r.pid === "_calib") calib = r.dati; else if (r.pid === "_avvisi") avvisi = r.dati; else if (r.pid === "_squadre") squadre = r.dati; else if (!r.pid.startsWith("_")) mappa[r.pid] = r.dati; }
+    return { mappa, stato, quote, calib, avvisi, squadre, n: Object.keys(mappa).length };
   } catch (e) { return { mappa: {}, stato: null, errore: e.message }; }
 }
 
@@ -92,6 +103,22 @@ async function cronQuote(env, forza = false) {
   const nuovo = await aggiornaQuote(env, f.quote, partite, forza);
   if (nuovo) await db(env, "POST", { tabella: "nba_forma", params: { on_conflict: "pid" }, corpo: [{ pid: "_quote", nome: "quote", sq: "", dati: nuovo, agg: new Date().toISOString() }], prefer: "resolution=merge-duplicates" });
   return { aggiornato: !!nuovo, crediti: nuovo?.crediti ?? f.quote?.crediti ?? null, errore: nuovo?.errore || null };
+}
+
+// Ogni 30 minuti (cron): aggiorna la forma delle squadre che giocano oggi e domani (ultime 10 partite, in casa e in trasferta)
+async function aggiornaSquadre(env) {
+  if (!dbOk(env)) return;
+  const [g0, g1, f] = await Promise.all([caricaGiorno(0, null, 60), caricaGiorno(1, null, 60), leggiForma(env)]);
+  const dati = { ...(f.squadre || {}) }, sigle = [...new Set([...g0.partite, ...g1.partite].filter((p) => p.stato !== "post").flatMap((p) => [p.casa, p.trasf]))];
+  const vecchie = sigle.filter((s) => !dati[s] || Date.now() - Date.parse(dati[s].agg || 0) > 6 * 3600e3).slice(0, 14);
+  if (!vecchie.length) return;
+  await Promise.all(vecchie.map(async (s) => {
+    try {
+      const u = await caricaUltime(s, 10), m = (l, k) => (l.length ? l.reduce((a, x) => a + x[k], 0) / l.length : 0), c = u.filter((x) => x.casa), t = u.filter((x) => !x.casa);
+      dati[s] = { n: u.length, pf: m(u, "pf"), pa: m(u, "pa"), nc: c.length, pfc: m(c, "pf"), pac: m(c, "pa"), nt: t.length, pft: m(t, "pf"), pat: m(t, "pa"), v: u.filter((x) => x.vinta).length, agg: new Date().toISOString() };
+    } catch {}
+  }));
+  await db(env, "POST", { tabella: "nba_forma", params: { on_conflict: "pid" }, corpo: [{ pid: "_squadre", nome: "forma squadre", sq: "", dati, agg: new Date().toISOString() }], prefer: "resolution=merge-duplicates" });
 }
 
 // ---- Taratura automatica: confronta le percentuali previste con i risultati reali dello Storico (almeno 25 esiti per categoria)
@@ -177,6 +204,11 @@ async function apiDiag(env) {
     if (q.errore) throw new Error(q.errore + ` (crediti rimasti: ${q.crediti ?? "?"})`);
     return `${Object.keys(q.giochi || {}).length} partite con linee, ${np} quote giocatori, aggiornate alle ${q.t.slice(11, 16)} UTC, crediti rimasti ${q.crediti ?? "?"}`;
   });
+  await prova("Forma delle squadre", async () => {
+    if (!dbOk(env)) throw new Error("serve Supabase");
+    const s = (await leggiForma(env)).squadre; if (!s) return "nessun dato ancora (si riempie da solo con il cron ogni 30 minuti)";
+    const k = Object.keys(s); return `${k.length} squadre con le ultime 10 partite, ultimo aggiornamento ${k.map((x) => s[x].agg).sort().slice(-1)[0].slice(0, 16)}`;
+  });
   await prova("Avvisi Telegram", async () => {
     if (!env.TELEGRAM_TOKEN || !env.TELEGRAM_CHAT_ID) return "non attivi (facoltativi): servono i segreti TELEGRAM_TOKEN e TELEGRAM_CHAT_ID";
     const f = dbOk(env) ? await leggiForma(env) : {}; const a = f.avvisi || {}, k = Object.keys(a).sort().slice(-1)[0];
@@ -197,7 +229,7 @@ async function apiGiorno(env, ctx, offset, data = null) {
   let infortuni = {};
   try { infortuni = await caricaInfortuni(); } catch (e) { errori.push("infortuni: " + e.message); }
   const b2b = [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))];
-  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, b2b, fm.mappa, fm.quote, g.linee);
+  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, b2b, fm.mappa, fm.quote, g.linee, fm.squadre);
   const picks = applicaCalib(consigli(gare), fm.calib);
   const sigle = new Set(); gare.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
   g.ieri.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
@@ -224,8 +256,8 @@ async function apiGiorno(env, ctx, offset, data = null) {
   const sq = {}; sigle.forEach((s) => { sq[s] = info(s); });
   const finiteNome = new Set();
   return { aggiornato: new Date().toISOString(), offset, squadre: sq, linee: g.linee, ieri: g.ieri, b2b,
-    schedine: proposte(picks, gare), valore: dovePiuDiverso(gare), quote: fm.quote ? { t: fm.quote.t, crediti: fm.quote.crediti, partite: Object.keys(fm.quote.giochi || {}).length } : null,
-    partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, iso: x.iso, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr,
+    schedine: proposte(picks, gare).map((s) => ({ ...s, chiave: `sch|${data || romaYMD(Date.now() + offset * 86400000)}|${s.id}` })), valore: dovePiuDiverso(gare), quote: fm.quote ? { t: fm.quote.t, crediti: fm.quote.crediti, partite: Object.keys(fm.quote.giochi || {}).length } : null,
+    partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, iso: x.iso, fs: x.fs, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr,
       r: { ...x.r, pw: phi(x.r.margine / STD.Spread) }, giocatori: x.giocatori, inf: x.inf })),
     picks, diag: [...stat.diag, `forma: ${fm.n || 0} giocatori`, `partite: ${gare.length}`, `linee: ${Object.keys(g.linee).length}`, `infortuni: ${Object.keys(infortuni).length}`, `registro: ${registro}`, ...errori] };
 }
@@ -295,7 +327,7 @@ async function apiLive(env) {
   const visti = new Set(g.partite.map((p) => p.id));
   g.partite = [...g.partite, ...gPrima.partite.filter((p) => p.stato === "in" && !visti.has(p.id))];
   let infortuni = {}; try { infortuni = await caricaInfortuni(); } catch {}
-  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))], fm.mappa, fm.quote);
+  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))], fm.mappa, fm.quote, {}, fm.squadre);
   const picks = consigli(gare);
   const inCorso = gare.filter((x) => x.stato === "in");
   const out = await Promise.all(inCorso.map(async (x) => {
@@ -341,7 +373,7 @@ export default {
   // ogni 30 minuti: salva i consigli delle partite che non sono iniziate e verifica quelle finite
   async scheduled(event, env, ctx) {
     if (event.cron === "5,35 * * * *") { ctx.waitUntil(cronAvvisi(env).catch(() => {})); return; }
-    if (event.cron === "20,50 * * * *") { ctx.waitUntil(cronQuote(env).catch(() => {})); return; }
+    if (event.cron === "20,50 * * * *") { ctx.waitUntil(cronQuote(env).catch(() => {})); ctx.waitUntil(aggiornaSquadre(env).catch(() => {})); return; }
     if (event.cron === "10,40 * * * *") { ctx.waitUntil(aggiornaForma(env).catch(() => {})); return; }
     ctx.waitUntil((async () => {
       try { await apiGiorno(env, ctx, 0); } catch {}
