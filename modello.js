@@ -133,7 +133,7 @@ export function probLive(x, gara, box, giocatori) {
   if (!m) return null;
   let cur, exp, sd;
   if (x.tipo === "Squadra") { const sq = x.squadra === casa; cur = sq ? ptCasa : ptTr; exp = cur + (sq ? r.ptCasa : r.ptTr) * rest; sd = sdR(STD.Squadra); }
-  else if (x.tipo === "Totale") { cur = ptCasa + ptTr; exp = cur + r.totale * rest; sd = sdR(STD.Totale); }
+  else if (x.tipo === "Totale") { cur = ptCasa + ptTr; exp = stimaTotale(cur, f, r.totale); sd = sdR(STD.Totale); }
   else if (MERCATI[x.tipo]) {
     const k = MERCATI[x.tipo].k, pl = giocatori.find((q) => (q.pid && q.pid === x.pid) || q.nome === x.testo.split(" over")[0].trim());
     if (!pl) return null;
@@ -147,4 +147,40 @@ export function probLive(x, gara, box, giocatori) {
   } else return null;
   const out = lato === "over" ? (cur > T ? 1 : 1 - phi((T - exp) / sd)) : (cur > T ? 0 : phi((T - exp) / sd));
   return { adesso: String(cur), p: out, cur, exp };
+}
+
+// Stima del totale finale: punti già fatti + resto del tempo, mescolando il ritmo previsto e quello visto in campo
+export function stimaTotale(cur, f, preTot) {
+  const rest = Math.max(0, 1 - f), ritmo = f > 0.1 ? cur / f : preTot, w = Math.min(f, 0.6);
+  return cur + rest * (ritmo * w + preTot * (1 - w));
+}
+
+// Segnali nati durante la partita: soglie con probabilità >= 70% in base a punteggio, tempo e minuti giocati
+export function segnaliLive(gara, box, giocatori) {
+  const { casa, trasf, ptCasa, ptTr, r, f } = gara, rest = Math.max(0, 1 - f), out = [];
+  if (rest < 0.03) return out;
+  const part = `${nome(trasf, true)} @ ${nome(casa, true)}`, MIN_P = 0.70;
+  const cur = ptCasa + ptTr, exp = stimaTotale(cur, f, r.totale), sd = Math.max(STD.Totale * Math.sqrt(rest), 0.6);
+  const tt = []; for (let T = Math.floor(exp - 6 * sd) + 0.5; T <= exp + 6 * sd; T += 1) if (T > cur) tt.push(T);
+  const ov = tt.filter((T) => 1 - phi((T - exp) / sd) >= MIN_P), un = tt.filter((T) => phi((T - exp) / sd) >= MIN_P);
+  if (ov.length) { const T = Math.max(...ov); out.push({ tipo: "Totale", testo: `Totale over ${T}`, adesso: `${cur} ora`, stima: exp.toFixed(0), prob: 1 - phi((T - exp) / sd), motivo: `Con ${cur} punti e il ${Math.round(f * 100)}% giocato, la stima finale è ${exp.toFixed(0)}.` }); }
+  if (un.length) { const T = Math.min(...un); out.push({ tipo: "Totale", testo: `Totale under ${T}`, adesso: `${cur} ora`, stima: exp.toFixed(0), prob: phi((T - exp) / sd), motivo: `Con ${cur} punti e il ${Math.round(f * 100)}% giocato, la stima finale è ${exp.toFixed(0)}.` }); }
+  const media = ptCasa - ptTr + r.margine * rest, pc = phi(media / Math.max(STD.Spread * Math.sqrt(rest), 0.6));
+  if (Math.max(pc, 1 - pc) >= 0.75) { const sq = pc >= 0.5 ? casa : trasf; out.push({ tipo: "Vincente", testo: `${nome(sq, true)} vince`, adesso: `${ptCasa}-${ptTr}`, stima: `${media >= 0 ? "+" : ""}${media.toFixed(0)}`, prob: Math.max(pc, 1 - pc), motivo: `Margine atteso a fine partita di circa ${Math.abs(media).toFixed(0)} punti.` }); }
+  const minimi = { Punti: 9.5, Rimbalzi: 3.5, Assist: 2.5 };
+  for (const pl of giocatori) {
+    const b = (box || {})[pl.nome.trim().toLowerCase()];
+    if (!b || !b.min || b.min < 4) continue;
+    for (const [m, c] of Object.entries(MERCATI)) {
+      const o = pl[c.k], c0 = b[c.k] != null ? b[c.k] : 0, mp = b.min;
+      const restoMin = Math.max(pl.min - mp, 2), pm = o.v / pl.min, w = mp / (mp + 12), ritmo = c0 / mp;
+      const e = c0 + restoMin * (pm * (1 - w) + ritmo * w), sdp = Math.max(o.sd * Math.sqrt(restoMin / pl.min), 0.6);
+      const buoni = []; for (let T = Math.floor(c0) + 1.5; T <= e + 4 * sdp; T += 1) if (T >= minimi[m] && 1 - phi((T - e) / sdp) >= MIN_P) buoni.push(T);
+      if (!buoni.length) continue;
+      const T = Math.max(...buoni), pr = 1 - phi((T - e) / sdp);
+      out.push({ tipo: m, pid: pl.pid, sq: pl.sq, testo: `${pl.nome} over ${T} ${c.unita}`, adesso: `${c0} ${c.unita} in ${Math.round(mp)} min`, stima: e.toFixed(1), prob: pr,
+        motivo: `Ora ${c0} ${c.unita} in ${Math.round(mp)} minuti: ritmo e minuti rimasti portano la stima finale a ${e.toFixed(1)} (prima della gara ${o.v.toFixed(1)}).` });
+    }
+  }
+  return out.sort((a, b) => b.prob - a.prob);
 }
