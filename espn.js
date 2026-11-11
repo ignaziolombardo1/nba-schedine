@@ -28,7 +28,8 @@ export function leggiScoreboard(sb) {
     const casa = cc.team.abbreviation, trasf = ct.team.abbreviation;
     const tipo = (ev.status || {}).type || {}, stato = tipo.state;
     partite.push({ id: String(ev.id), casa, trasf, ora: oraRoma(ev.date), iso: ev.date, stato, dettaglio: tipo.shortDetail || "",
-      ptCasa: stato !== "pre" ? punti(cc.score) : null, ptTr: stato !== "pre" ? punti(ct.score) : null });
+      ptCasa: stato !== "pre" ? punti(cc.score) : null, ptTr: stato !== "pre" ? punti(ct.score) : null,
+      periodo: (ev.status || {}).period || 0, orologio: String((ev.status || {}).displayClock || "") });
     for (const o of (comp.odds || []).slice(0, 1)) {
       if (o.overUnder) linee[`tot_${casa}`] = parseFloat(o.overUnder);
       const m = /^([A-Z]{2,4})\s+([+-]?\d+(?:\.\d+)?)$/.exec(String(o.details || "").trim());
@@ -100,8 +101,8 @@ export async function caricaGiorno(offset) {
   return { ...base, ieri };
 }
 
-export async function caricaBoxscore(eventId) {
-  const d = await get(`${ESPN}/summary`, { event: eventId }, 600), out = {};
+export async function caricaBoxscore(eventId, ttl = 600) {
+  const d = await get(`${ESPN}/summary`, { event: eventId }, ttl), out = {};
   for (const team of (d.boxscore || {}).players || []) for (const blocco of team.statistics || []) {
     const labels = blocco.labels || blocco.names || [], idx = {};
     labels.forEach((l, i) => { idx[String(l).toUpperCase()] = i; });
@@ -109,7 +110,7 @@ export async function caricaBoxscore(eventId) {
       const n = (a.athlete || {}).displayName, st = a.stats || [];
       if (!n || !st.length) continue;
       const v = (k) => { const i = idx[k]; const x = i != null ? parseFloat(st[i]) : NaN; return Number.isFinite(x) ? x : null; };
-      out[n.trim().toLowerCase()] = { pts: v("PTS"), reb: v("REB"), ast: v("AST") };
+      out[n.trim().toLowerCase()] = { nome: n, sq: (team.team || {}).abbreviation, pts: v("PTS"), reb: v("REB"), ast: v("AST"), min: v("MIN") };
     }
   }
   return out;
