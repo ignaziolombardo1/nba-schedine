@@ -20,18 +20,40 @@ export const stdGiocatore = (val, minuti, m) => Math.max(val * MERCATI[m].cv * (
 export const probOver = (val, soglia, sd) => 1 - phi((soglia - val) / sd);
 const r1 = (x) => Math.round(x * 10) / 10;
 
-export function proiettaPartita(casa, trasf, teams, b2b = []) {
+// ---------- Confronto con il mercato dei bookmaker
+export const W_MODELLO = 0.4; // peso del nostro modello nella media finale (il resto è il mercato)
+export const normNome = (n) => String(n || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\b(jr|sr|ii|iii|iv)\b\.?/g, "").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+export function qnorm(p) { let lo = -8, hi = 8; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (phi(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
+// media implicita nel mercato: da una linea e dalla probabilità di over (senza margine del bookmaker)
+export const muMercato = (linea, pOver, sd) => linea - sd * qnorm(1 - Math.min(0.97, Math.max(0.03, pOver)));
+// Unisce la stima del modello con quella del mercato. q = {linea, pOver, n, libri}
+export function combina(muMod, sd, q) {
+  if (!q || q.linea == null || q.pOver == null) return { mu: muMod, mk: null };
+  const muMk = muMercato(q.linea, q.pOver, sd), diff = (muMod - muMk) / sd;
+  // il mercato è di solito meglio calibrato: se il modello è lontano più di 1.5 deviazioni, lo si avvicina prima di unire
+  const muModC = Math.min(muMk + 1.5 * sd, Math.max(muMk - 1.5 * sd, muMod)), mu = W_MODELLO * muModC + (1 - W_MODELLO) * muMk;
+  return { mu, mk: { linea: q.linea, n: q.n || 1, libri: q.libri || [], pMk: q.pOver, pMod: 1 - phi((q.linea - muMod) / sd), pFin: 1 - phi((q.linea - mu) / sd), muMod, muMk, diff, div: Math.abs(diff) > 0.75 ? "alta" : Math.abs(diff) > 0.4 ? "media" : "bassa" } };
+}
+
+export function proiettaPartita(casa, trasf, teams, b2b = [], quote = null) {
   const T = teams, pace = 100;
   const offCasa = (T[casa].pf + T[trasf].pa) / 2, offTr = (T[trasf].pf + T[casa].pa) / 2;
-  const ptCasa = offCasa * pace / 100 + HOME_ADV / 2 - (b2b.includes(casa) ? B2B_PUNTI : 0);
-  const ptTr = offTr * pace / 100 - HOME_ADV / 2 - (b2b.includes(trasf) ? B2B_PUNTI : 0);
-  return { ptCasa, ptTr, totale: ptCasa + ptTr, margine: ptCasa - ptTr };
+  let ptCasa = offCasa * pace / 100 + HOME_ADV / 2 - (b2b.includes(casa) ? B2B_PUNTI : 0);
+  let ptTr = offTr * pace / 100 - HOME_ADV / 2 - (b2b.includes(trasf) ? B2B_PUNTI : 0);
+  const out = { ptCasa, ptTr, totale: ptCasa + ptTr, margine: ptCasa - ptTr };
+  if (!quote) return out;
+  // totale: linea del bookmaker; spread: linea della squadra di casa (negativa se favorita) -> margine = -linea
+  const ct = combina(out.totale, STD.Totale, quote.tot);
+  const sp = quote.spr ? combina(out.margine, STD.Spread, { linea: -quote.spr.linea, pOver: quote.spr.pCasa, n: quote.spr.n, libri: quote.spr.libri }) : { mu: out.margine, mk: null };
+  if (!ct.mk && !sp.mk) return out;
+  const tot = ct.mu, mar = sp.mu;
+  return { ptCasa: (tot + mar) / 2, ptTr: (tot - mar) / 2, totale: tot, margine: mar, mk: { tot: ct.mk, spr: sp.mk, totaleModello: out.totale, margineModello: out.margine } };
 }
 
 // Minuti attesi: nelle partite molto sbilanciate i titolari giocano meno (circa -0.8% ogni punto oltre 8 di margine, max -8%)
 export const fattoreMinuti = (margine) => { const m = Math.abs(margine); return m >= 8 ? 1 - Math.min(0.08, 0.008 * (m - 8)) : 1; };
 
-export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}, forma = {}, margine = 0) {
+export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}, forma = {}, margine = 0, props = null) {
   const lega = Object.values(teams).reduce((a, t) => a + t.pa, 0) / Object.keys(teams).length;
   const fDif = teams[avv].pa / lega;
   const media = (a) => a.reduce((x, y) => x + y, 0) / a.length;
@@ -50,11 +72,13 @@ export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}, form
       const o = { nome: p.nome, pid: p.pid, sq: sig, min: r1(minAtt), inf, forma: r1(l10 ? l10.pts : p.pts), stagione: r1(p.pts), conForma: !!l10,
         ult: ok ? { pts: [...f.pts].reverse(), reb: [...f.reb].reverse(), ast: [...f.ast].reverse() } : null };
       for (const [m, c] of Object.entries(MERCATI)) {
-        const v = r1(val[m]);
+        const q = props && props[`${normNome(p.nome)}|${c.k}`];
+        const cb = q ? combina(val[m], stdGiocatore(val[m], minAtt, m), q) : null;
+        const v = r1(cb && cb.mk ? cb.mu : val[m]);
         const sd = stdGiocatore(v, minAtt, m);
         const lad = c.scalini.map((t) => ({ t, p: probOver(v, t, sd) })).filter((x) => x.p >= 0.2 && x.p <= 0.97);
         const buone = lad.filter((x) => x.p >= PROB_MIN);
-        o[c.k] = { v, sd: r1(sd * 100) / 100, media: r1(m === "Punti" ? p.pts : m === "Rimbalzi" ? p.reb : p.ast), lad: lad.map((x) => [x.t, Math.round(x.p * 1000) / 1000]),
+        o[c.k] = { v, vModello: r1(val[m]), mk: cb && cb.mk ? { ...cb.mk, pFin: probOver(v, cb.mk.linea, sd) } : null, sd: r1(sd * 100) / 100, media: r1(m === "Punti" ? p.pts : m === "Rimbalzi" ? p.reb : p.ast), lad: lad.map((x) => [x.t, Math.round(x.p * 1000) / 1000]),
                    rec: buone.length ? Math.max(...buone.map((x) => x.t)) : null };
       }
       return o;
@@ -81,20 +105,23 @@ export function consigli(partite) {
     const ov = scal.filter((x) => 1 - phi((x - r.totale) / STD.Totale) >= PROB_MIN);
     if (ov.length) { const x = Math.max(...ov), pr = 1 - phi((x - r.totale) / STD.Totale);
       out.push({ ...base, id: `tov_${g.id}`, tipo: "Totale", squadra: null, testo: `Totale over ${x}`, stima: r.totale.toFixed(1), prob: pr,
-        motivo: `Stima ${r.totale.toFixed(1)} punti totali: probabilità di superare ${x} circa ${Math.round(pr * 100)}%.` }); }
+        motivo: `Stima ${r.totale.toFixed(1)} punti totali${r.mk && r.mk.tot ? ` (modello ${r.mk.totaleModello.toFixed(1)}, bookmaker linea ${r.mk.tot.linea})` : ""}: probabilità di superare ${x} circa ${Math.round(pr * 100)}%.` }); }
     const un = scal.filter((x) => phi((x - r.totale) / STD.Totale) >= PROB_MIN);
     if (un.length) { const x = Math.min(...un), pr = phi((x - r.totale) / STD.Totale);
       out.push({ ...base, id: `tun_${g.id}`, tipo: "Totale", squadra: null, testo: `Totale under ${x}`, stima: r.totale.toFixed(1), prob: pr,
-        motivo: `Stima ${r.totale.toFixed(1)} punti totali: probabilità di restare sotto ${x} circa ${Math.round(pr * 100)}%.` }); }
+        motivo: `Stima ${r.totale.toFixed(1)} punti totali${r.mk && r.mk.tot ? ` (modello ${r.mk.totaleModello.toFixed(1)}, bookmaker linea ${r.mk.tot.linea})` : ""}: probabilità di restare sotto ${x} circa ${Math.round(pr * 100)}%.` }); }
     for (const sq of [casa, trasf]) {
       const ds = g.giocatori.filter((p) => p.sq === sq);
       for (const [m, c] of Object.entries(MERCATI)) {
         for (const p of [...ds].sort((a, b) => b[c.k].v - a[c.k].v).slice(0, 3)) {
           const o = p[c.k];
           if (o.rec === null || o.rec < c.minimo) continue;
-          const pr = probOver(o.v, o.rec, o.sd);
-          out.push({ ...base, id: `${c.k}_${g.id}_${p.pid || p.nome}`, tipo: m, squadra: sq, pid: p.pid, testo: `${p.nome} over ${o.rec} ${c.unita}`, stima: o.v.toFixed(1), prob: pr,
-            motivo: `Stima ${o.v.toFixed(1)} ${c.unita} (media stagione ${o.media.toFixed(1)}, ${Math.round(p.min)} min). Con la variabilità tipica, la probabilità di superare ${o.rec} è circa ${Math.round(pr * 100)}%. Se il bookmaker offre una linea più bassa, c'è valore.` });
+          const pr = probOver(o.v, o.rec, o.sd), mk = o.mk;
+          const motivo = mk
+            ? `Bookmaker: linea ${mk.linea}, over ${Math.round(mk.pMk * 100)}% (${mk.n} ${mk.n === 1 ? "libro" : "libri"}). Il nostro modello da solo stimava ${o.vModello.toFixed(1)} ${c.unita}; unito al mercato la stima è ${o.v.toFixed(1)} e la probabilità di superare ${o.rec} è circa ${Math.round(pr * 100)}%.`
+            : `Stima ${o.v.toFixed(1)} ${c.unita} (media stagione ${o.media.toFixed(1)}, ${Math.round(p.min)} min). Con la variabilità tipica, la probabilità di superare ${o.rec} è circa ${Math.round(pr * 100)}%. Senza quote dei bookmaker: controlla la linea offerta.`;
+          out.push({ ...base, id: `${c.k}_${g.id}_${p.pid || p.nome}`, tipo: m, squadra: sq, pid: p.pid, testo: `${p.nome} over ${o.rec} ${c.unita}`, stima: o.v.toFixed(1), prob: pr, motivo,
+            mercato: mk ? { linea: mk.linea, pMk: mk.pMk, pMod: mk.pMod, pFin: mk.pFin, div: mk.div } : null });
         }
       }
     }

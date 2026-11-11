@@ -90,6 +90,12 @@ function schedaPartita(D, p, topPick, cliccabile) {
 }
 const raggruppa = (picks) => [["Molto probabili (80% o più)", picks.filter((x) => x.prob >= 0.8)], ["Probabili (70-80%)", picks.filter((x) => x.prob >= 0.7 && x.prob < 0.8)], ["Da valutare (sotto il 70%)", picks.filter((x) => x.prob < 0.7)]];
 
+function confrontoMercato(D) {
+  if (!D.partite.length) return "";
+  if (!D.valore || !D.valore.length) return `<div class="cap" style="margin:6px 0">Quote bookmaker non ancora disponibili${D.quote ? " per le partite di oggi (si scaricano nelle ore prima dell'inizio)" : ": serve la chiave ODDS_API_KEY, vedi Storico → Controllo dei dati"}.</div>`;
+  return `<h2>Modello contro bookmaker</h2><div class="cap" style="margin-top:0">Giocatori dove il nostro calcolo, unito al mercato, vede più probabilità di quelle dei bookmaker. Il mercato di solito è più preciso: usalo come segnale da verificare, non come certezza.</div>` +
+    D.valore.slice(0, 8).map((v) => `<div class="card riga" style="gap:10px;padding:10px 12px"><div class="lg" style="flex:1;min-width:0">${foto(v.pid, 36)}<div style="min-width:0"><div style="font-weight:600">${esc(v.nome)} ${v.lato} ${v.linea}</div><div class="s">${esc(v.mercato)} · ${esc(v.partita)} · ${divTag(v.div)}</div></div></div><div style="text-align:right"><div style="font-size:19px;font-weight:600;color:${colProb(v.pFin)}">${pct(v.pFin)}</div><div class="s">mercato ${pct(v.pMk)} · modello ${pct(v.pMod)}</div></div></div>`).join("");
+}
 function migliori(D) {
   const viste = new Set(), scelte = [];
   for (const x of D.picks) {
@@ -115,6 +121,7 @@ async function vistaPartite(force) {
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
   if (D.partite.length && !D.partite.some((p) => p.giocatori && p.giocatori.length)) h += `<div class="card" style="border-color:${RD}"><b style="color:${RD}">Giocatori non disponibili</b><div class="s" style="margin-top:4px">${esc((D.diag || []).filter((x) => /giocatori/.test(x)).join(" · ") || "ESPN non ha restituito le statistiche dei giocatori.")}</div></div>`;
   h += migliori(D);
+  h += confrontoMercato(D);
   if (D.partite.length) h += `<h2>Tutte le partite</h2>`;
   h += D.partite.map((p) => schedaPartita(D, p, top(p.id), true)).join("");
   if (D.ieri.length) {
@@ -178,8 +185,8 @@ async function vistaStudio(id, force) {
       h += `<div class="card"><div class="lg" style="margin-bottom:6px">${logo(sq, 26)}<b>${esc(T(D, sq).n)}</b></div>` + Object.entries(MERC).map(([m, c]) => `<div class="s" style="margin-top:8px">${m.toUpperCase()}</div>` + [...ds].sort((a, b) => b[c.k].v - a[c.k].v).slice(0, 3).map((x, i) => `<div class="riga" style="padding:2px 0"><span>${i + 1}. ${esc(x.nome)}</span><b style="color:${i === 0 ? OR : "#f2f2f2"}">${x[c.k].v.toFixed(1)}</b></div>`).join("")).join("") + `</div>`;
     }
   }
-  const lt = D.linee["tot_" + p.casa], lineaT = ls.get("L_tot_" + id, lt ?? "");
-  h += `<h2>Totale e spread</h2><div class="card"><div class="s">Over/Under (punti totali)</div>${gauge(r.totale, lineaT)}<div id="totp" class="s"></div><input class="linea" id="lt" inputmode="decimal" placeholder="Linea Over/Under (es. 224.5)" value="${esc(lineaT)}"></div>`;
+  const lt = D.linee["tot_" + p.casa] ?? (r.mk && r.mk.tot ? r.mk.tot.linea : undefined), lineaT = ls.get("L_tot_" + id, lt ?? "");
+  h += `<h2>Totale e spread</h2><div class="card"><div class="s">Over/Under (punti totali)</div>${gauge(r.totale, lineaT)}<div id="totp" class="s"></div><input class="linea" id="lt" inputmode="decimal" placeholder="Linea Over/Under (es. 224.5)" value="${esc(lineaT)}">${mercatoPartita(p)}</div>`;
   if (p.giocatori.length) {
     h += `<h2>Giocatori</h2><div class="tabs">${Object.keys(MERC).map((m) => `<button class="chipbtn${m === mer ? " on" : ""}" data-m="${m}">${m}</button>`).join("")}</div>`;
     const c = MERC[mer];
@@ -189,7 +196,7 @@ async function vistaStudio(id, force) {
     }
   }
   if (p.inf && p.inf.length) h += `<h2>Infortuni segnalati</h2>` + p.inf.map((i) => `<div class="card" style="padding:9px 12px"><b>${esc(i.nome)}</b> <span class="s">(${esc(T(D, i.sq).b)})</span> <span style="color:${i.stato === "out" ? RD : AM}">${i.stato === "out" ? "Out, escluso dai calcoli" : "Dubbio, ancora incluso"}</span><div class="s">${esc(i.dettaglio)}</div></div>`).join("");
-  const note = ["Infortuni: l'app legge l'elenco di ESPN ed esclude chi è «out». Controlla le ultime notizie e le formazioni poco prima della partita.", "Riposo: è considerato solo il back-to-back (squadra che ha giocato ieri, circa un punto in meno).", "Rimbalzi e assist: stima semplice basata sulla media e sul ritmo di gioco, meno precisa dei punti.", "La forma recente non è disponibile con questa fonte: le stime dei giocatori usano la media stagionale."];
+  const note = ["Infortuni: l'app legge l'elenco di ESPN ed esclude chi è «out». Controlla le ultime notizie e le formazioni poco prima della partita.", "Riposo: è considerato solo il back-to-back (squadra che ha giocato ieri, circa un punto in meno).", "Rimbalzi e assist: stima semplice basata sulla media e sul ritmo di gioco, meno precisa dei punti.", "Quote bookmaker: la stima finale unisce il modello (40%) e il mercato (60%). Se le due stime sono molto distanti, di solito il mercato sa qualcosa che il modello non vede (infortuni, formazioni): fidati meno della giocata."];
   if (Math.abs(r.margine) >= 10) note.push("Margine stimato ampio: nei finali sbilanciati i titolari possono giocare meno minuti, con rischio per gli over sui giocatori.");
   if (Math.abs(r.margine) < 3) note.push("Partita molto equilibrata: lo spread è poco affidabile, conta di più il totale.");
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) note.push(`${T(D, s).b} ha giocato ieri: stima ridotta di circa 1.2 punti.`);
@@ -204,6 +211,13 @@ async function vistaStudio(id, force) {
     const el = $("#ultime"); if (!el) return;
     el.innerHTML = res.map((x, i) => ultimeHtml(D, [p.casa, p.trasf][i], x && x.ultime)).join("");
   });
+}
+function mercatoPartita(p) {
+  const r = p.r, mk = r.mk; if (!mk || (!mk.tot && !mk.spr)) return `<div class="s" style="margin-top:8px">Nessuna quota bookmaker ancora per questa partita: stima del solo modello.</div>`;
+  let h = `<div class="mk">`;
+  if (mk.tot) h += `<div class="riga s"><span>BOOKMAKER · TOTALE ${mk.tot.linea}</span><span>${divTag(mk.tot.div)}</span></div><div class="grid3"><div><b style="color:${colProb(mk.tot.pMk)}">${pct(mk.tot.pMk)}</b><span>mercato over</span></div><div><b>${mk.totaleModello.toFixed(1)}</b><span>solo modello</span></div><div><b>${r.totale.toFixed(1)}</b><span>stima finale</span></div></div><div class="s">${mk.tot.n} ${mk.tot.n === 1 ? "libro" : "libri"} · il modello da solo darebbe over ${pct(mk.tot.pMod)}, insieme al mercato ${pct(mk.tot.pFin)}</div>`;
+  if (mk.spr) h += `<div class="riga s" style="margin-top:8px"><span>BOOKMAKER · SPREAD ${esc(p.casa)} ${mk.spr.linea > 0 ? "+" : ""}${mk.spr.linea}</span><span>${divTag(mk.spr.div)}</span></div><div class="s">Margine stimato dal modello ${mk.margineModello.toFixed(1)}, dal mercato ${mk.spr.muMk.toFixed(1)}, finale ${r.margine.toFixed(1)} (a favore di ${esc(p.casa)}).</div>`;
+  return h + `</div>`;
 }
 function gauge(stima, linea) {
   const lo = stima - 20, hi = stima + 20, pp = (v) => Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100));
@@ -230,6 +244,15 @@ function formaHtml(x, mer, c, o) {
   const tag = diff >= 1.5 ? `<span style="color:${GR}">in forma</span>` : diff <= -1.5 ? `<span style="color:${RD}">in calo</span>` : `<span class="s">nella media</span>`;
   return `<div style="margin-top:10px"><div class="riga s"><span>ULTIME ${v.length} GARE</span><span>${tag} · media ${m10.toFixed(1)}</span></div>${spark(v, o.rec, MU)}</div>`;
 }
+const divTag = (d) => d === "alta" ? `<span style="color:${RD}">modello e mercato molto distanti</span>` : d === "media" ? `<span style="color:${AM}">in parte diversi</span>` : `<span style="color:${GR}">allineati</span>`;
+function quoteGioc(o, c) {
+  const m = o.mk;
+  if (!m) return `<div class="s" style="margin-top:8px">Nessuna quota bookmaker per questo giocatore: stima del solo modello.</div>`;
+  const libri = (m.libri || []).slice(0, 4).map((l) => `${esc(l.b)} ${l.o}/${l.u}`).join(" · ");
+  return `<div class="mk"><div class="riga s"><span>BOOKMAKER · LINEA ${m.linea} ${c.u}</span><span>${divTag(m.div)}</span></div>
+  <div class="grid3"><div><b style="color:${colProb(m.pMk)}">${pct(m.pMk)}</b><span>mercato over</span></div><div><b>${pct(m.pMod)}</b><span>solo modello</span></div><div><b style="color:${colProb(m.pFin)}">${pct(m.pFin)}</b><span>insieme</span></div></div>
+  <div class="s">Il modello da solo stimava ${o.vModello.toFixed(1)}, il mercato ${m.muMk.toFixed(1)}: stima finale ${o.v.toFixed(1)}. ${m.n} ${m.n === 1 ? "libro" : "libri"}${libri ? " · quote over/under: " + libri : ""}</div></div>`;
+}
 function schedaGiocatore(D, gid, x, mer, c) {
   const o = x[c.k], dub = x.inf === "dubbio" ? `<span class="pill" style="color:${AM};margin-left:6px">Dubbio</span>` : "";
   const tile = (n, v, on) => `<div class="tile${on ? " on" : ""}"><b>${v.toFixed(1)}</b><span>${n}</span></div>`;
@@ -237,7 +260,7 @@ function schedaGiocatore(D, gid, x, mer, c) {
   const lad = o.lad.map(([t, pr]) => { const col = pr >= 0.7 ? GR : pr >= 0.5 ? AM : MU; return `<span style="color:${col};${t === o.rec ? "border:1px solid " + col : ""}">over ${t} · ${pct(pr)}</span>`; }).join("");
   const key = `${gid}_${x.pid || x.nome}_${mer}`;
   return `<div class="card pl"><div class="lg">${foto(x.pid, 48)}<div style="min-width:0"><div class="tn">${esc(x.nome)}${dub}</div><div class="s">${esc(x.sq)} · ${Math.round(x.min)} min attesi</div></div></div>
-  <div class="row3">${tile("Punti", x.pts.v, mer === "Punti")}${tile("Rimbalzi", x.reb.v, mer === "Rimbalzi")}${tile("Assist", x.ast.v, mer === "Assist")}</div>${rec}${formaHtml(x, mer, c, o)}
+  <div class="row3">${tile("Punti", x.pts.v, mer === "Punti")}${tile("Rimbalzi", x.reb.v, mer === "Rimbalzi")}${tile("Assist", x.ast.v, mer === "Assist")}</div>${rec}${quoteGioc(o, c)}${formaHtml(x, mer, c, o)}
   <div class="s" style="margin-top:8px">ALTRE SOGLIE POSSIBILI</div><div class="lad">${lad}</div>
   <input class="linea" inputmode="decimal" placeholder="Tua linea ${mer.toLowerCase()} (es. ${(Math.round(o.v * 2) / 2)})" data-lk="${esc(key)}" data-v="${o.v}" data-sd="${o.sd}" value="${esc(ls.get("L_" + key, ""))}"><div class="s" data-lp="${esc(key)}"></div></div>`;
 }
@@ -264,7 +287,7 @@ function schedaLive(D, p) {
   <div class="bar" style="margin-top:6px;height:4px"><div style="width:${(p.f * 100).toFixed(0)}%;background:${OR}"></div></div>
   <div class="s" style="margin:10px 0 0">Probabilità di vittoria in questo momento</div><div class="bar"><div style="width:${((1 - p.pwLive) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
   <div class="riga s" style="margin:4px 0 8px"><span>${esc(p.trasf)} ${pct(1 - p.pwLive)}</span><span>${esc(p.casa)} ${pct(p.pwLive)}</span></div>
-  <span class="chip">Totale ora ${p.ptCasa + p.ptTr}</span><span class="chip">Finale stimato ${p.proiTot.toFixed(0)}</span><span class="chip">Prima della gara ${p.r.totale.toFixed(0)}</span></div>`;
+  <span class="chip">Totale ora ${p.ptCasa + p.ptTr}</span><span class="chip">Finale stimato ${p.proiTot.toFixed(0)}</span><span class="chip">Prima della gara ${p.r.totale.toFixed(0)}</span>${p.mercato ? `<span class="chip" style="color:${AM}">Bookmaker ${p.mercato.linea}: over ${pct(p.mercato.pMk)} (${p.mercato.minuti} min fa)</span><span class="chip" style="color:${colProb(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}">Nostra stima: ${p.mercato.pNostra >= 0.5 ? "over" : "under"} ${pct(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}</span>` : ""}</div>`;
 }
 function rigaSegnale(x) {
   const vis = x.pid ? foto(x.pid, 34) : `<span class="ph" style="width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-bolt" style="color:${OR}"></i></span>`;

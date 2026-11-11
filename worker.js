@@ -1,5 +1,6 @@
 import { info, nome } from "./squadre.js";
 import { proiettaPartita, proiettaGiocatori, consigli, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
+import { aggiornaQuote, chiaveGara } from "./quote.js";
 import { caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, caricaGamelog, dataUS, get } from "./espn.js";
 
 const J = (o, ttl = 0) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": ttl ? `public, max-age=${ttl}` : "no-store", "access-control-allow-origin": "*" } });
@@ -17,12 +18,15 @@ async function db(env, metodo, { params, corpo, prefer, tabella = "nba_consigli"
   const t = await r.text(); return t ? JSON.parse(t) : [];
 }
 
-function costruisci(partite, teams, players, infortuni, b2b, forma = {}) {
+function costruisci(partite, teams, players, infortuni, b2b, forma = {}, quote = null) {
   const out = [];
   for (const p of partite) {
     if (!teams[p.casa] || !teams[p.trasf]) continue;
-    const r = proiettaPartita(p.casa, p.trasf, teams, b2b);
-    const giocatori = players.length ? [...proiettaGiocatori(p.casa, p.trasf, teams, players, infortuni, forma, r.margine), ...proiettaGiocatori(p.trasf, p.casa, teams, players, infortuni, forma, -r.margine)] : [];
+    // le quote prepartita si usano solo per le partite non ancora iniziate
+    const k = chiaveGara(p.casa, p.trasf), usa = quote && p.stato === "pre";
+    const qg = usa ? (quote.giochi || {})[k] : null, qp = usa ? (quote.props || {})[k] : null;
+    const r = proiettaPartita(p.casa, p.trasf, teams, b2b, qg);
+    const giocatori = players.length ? [...proiettaGiocatori(p.casa, p.trasf, teams, players, infortuni, forma, r.margine, qp), ...proiettaGiocatori(p.trasf, p.casa, teams, players, infortuni, forma, -r.margine, qp)] : [];
     const inf = players.filter((q) => (q.sq === p.casa || q.sq === p.trasf) && q.min >= 20 && infortuni[q.nome.trim().toLowerCase()])
       .map((q) => ({ nome: q.nome, sq: q.sq, ...infortuni[q.nome.trim().toLowerCase()] }));
     out.push({ ...p, r, giocatori, inf });
@@ -30,14 +34,25 @@ function costruisci(partite, teams, players, infortuni, b2b, forma = {}) {
   return out;
 }
 
+// Dove il modello e il mercato si discostano di più (sulle linee reali dei bookmaker)
+function dovePiuDiverso(gare) {
+  const l = [];
+  const nomi = { pts: "Punti", reb: "Rimbalzi", ast: "Assist" };
+  for (const g of gare) for (const x of g.giocatori) for (const k of ["pts", "reb", "ast"]) {
+    const m = x[k] && x[k].mk; if (!m) continue;
+    const over = m.pFin >= 0.5, pF = over ? m.pFin : 1 - m.pFin, pM = over ? m.pMk : 1 - m.pMk, pMod = over ? m.pMod : 1 - m.pMod;
+    l.push({ g: g.id, partita: `${g.trasf} @ ${g.casa}`, pid: x.pid, nome: x.nome, sq: x.sq, mercato: nomi[k], lato: over ? "over" : "under", linea: m.linea, pMk: pM, pMod, pFin: pF, edge: pF - pM, div: m.div, n: m.n });
+  }
+  return l.sort((a, b) => b.edge - a.edge).slice(0, 12);
+}
 
 async function leggiForma(env) {
   if (!dbOk(env)) return { mappa: {}, stato: null };
   try {
     const righe = await db(env, "GET", { tabella: "nba_forma", params: { select: "pid,dati,agg", limit: "3000" } });
-    const mappa = {}; let stato = null;
-    for (const r of righe) { if (r.pid === "_stato") stato = r.dati; else mappa[r.pid] = r.dati; }
-    return { mappa, stato, n: Object.keys(mappa).length };
+    const mappa = {}; let stato = null, quote = null;
+    for (const r of righe) { if (r.pid === "_stato") stato = r.dati; else if (r.pid === "_quote") quote = r.dati; else if (!r.pid.startsWith("_")) mappa[r.pid] = r.dati; }
+    return { mappa, stato, quote, n: Object.keys(mappa).length };
   } catch (e) { return { mappa: {}, stato: null, errore: e.message }; }
 }
 
@@ -63,6 +78,16 @@ async function aggiornaForma(env) {
   await db(env, "POST", { tabella: "nba_forma", params: { on_conflict: "pid" }, corpo: righe, prefer: "resolution=merge-duplicates" });
 }
 
+// Ogni 30 minuti (cron): aggiorna le quote dei bookmaker se serve (rispettando il limite dei crediti)
+async function cronQuote(env, forza = false) {
+  if (!dbOk(env) || !env.ODDS_API_KEY) return { saltato: true };
+  const [g0, g1, f] = await Promise.all([caricaGiorno(0, null, 60), caricaGiorno(1, null, 60), leggiForma(env)]);
+  const partite = [...g0.partite, ...g1.partite].filter((p) => p.stato !== "post");
+  const nuovo = await aggiornaQuote(env, f.quote, partite, forza);
+  if (nuovo) await db(env, "POST", { tabella: "nba_forma", params: { on_conflict: "pid" }, corpo: [{ pid: "_quote", nome: "quote", sq: "", dati: nuovo, agg: new Date().toISOString() }], prefer: "resolution=merge-duplicates" });
+  return { aggiornato: !!nuovo, crediti: nuovo?.crediti ?? f.quote?.crediti ?? null, errore: nuovo?.errore || null };
+}
+
 async function apiDiag(env) {
   const v = [], prova = async (nome, fn) => { try { v.push({ nome, ok: true, dettaglio: String(await fn()) }); } catch (e) { v.push({ nome, ok: false, dettaglio: String(e.message || e) }); } };
   let gg = null, stat = null;
@@ -71,6 +96,15 @@ async function apiDiag(env) {
   await prova("Infortuni", async () => `${Object.keys(await caricaInfortuni()).length} segnalati`);
   await prova("Registro consigli (Supabase)", async () => { if (!dbOk(env)) throw new Error("secrets SUPABASE_URL / SUPABASE_KEY mancanti"); const r = await db(env, "GET", { params: { select: "chiave", limit: "5000" } }); return `${r.length} consigli salvati`; });
   await prova("Forma recente giocatori", async () => { if (!dbOk(env)) throw new Error("serve Supabase"); const f = await leggiForma(env); if (f.errore) throw new Error(f.errore + " (hai creato la tabella nba_forma?)"); const s = f.stato || {}; return `${f.n} giocatori con le ultime 10 partite${s.ultimo ? `, ultimo aggiornamento ${s.ultimo.slice(0, 16)}, ${s.falliti} falliti, ${s.da_fare} da fare` : ", nessun aggiornamento ancora"}${s.errore ? ", errore: " + s.errore : ""}`; });
+  await prova("Quote bookmaker (The Odds API)", async () => {
+    if (!env.ODDS_API_KEY) throw new Error("manca il segreto ODDS_API_KEY (vedi istruzioni)");
+    if (!dbOk(env)) throw new Error("serve Supabase");
+    const q = (await leggiForma(env)).quote;
+    if (!q || !q.t) return "chiave presente, nessuna quota ancora scaricata (parte quando ci sono partite nelle prossime 14 ore)";
+    const np = Object.values(q.props || {}).reduce((a, x) => a + Object.keys(x).length, 0);
+    if (q.errore) throw new Error(q.errore + ` (crediti rimasti: ${q.crediti ?? "?"})`);
+    return `${Object.keys(q.giochi || {}).length} partite con linee, ${np} quote giocatori, aggiornate alle ${q.t.slice(11, 16)} UTC, crediti rimasti ${q.crediti ?? "?"}`;
+  });
   await prova("Calendario squadra (ultimi incontri)", async () => `${(await caricaUltime("BOS")).length} partite trovate per BOS`);
   return { aggiornato: new Date().toISOString(), voci: v };
 }
@@ -81,7 +115,7 @@ async function apiGiorno(env, ctx, offset, data = null) {
   let infortuni = {};
   try { infortuni = await caricaInfortuni(); } catch (e) { errori.push("infortuni: " + e.message); }
   const b2b = [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))];
-  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, b2b, fm.mappa);
+  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, b2b, fm.mappa, fm.quote);
   const picks = consigli(gare);
   const sigle = new Set(); gare.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
   g.ieri.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
@@ -102,6 +136,7 @@ async function apiGiorno(env, ctx, offset, data = null) {
   const sq = {}; sigle.forEach((s) => { sq[s] = info(s); });
   const finiteNome = new Set();
   return { aggiornato: new Date().toISOString(), offset, squadre: sq, linee: g.linee, ieri: g.ieri, b2b,
+    valore: dovePiuDiverso(gare), quote: fm.quote ? { t: fm.quote.t, crediti: fm.quote.crediti, partite: Object.keys(fm.quote.giochi || {}).length } : null,
     partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr,
       r: { ...x.r, pw: phi(x.r.margine / STD.Spread) }, giocatori: x.giocatori, inf: x.inf })),
     picks, diag: [...stat.diag, `forma: ${fm.n || 0} giocatori`, `partite: ${gare.length}`, `linee: ${Object.keys(g.linee).length}`, `infortuni: ${Object.keys(infortuni).length}`, `registro: ${registro}`, ...errori] };
@@ -160,7 +195,7 @@ async function apiLive(env) {
   const visti = new Set(g.partite.map((p) => p.id));
   g.partite = [...g.partite, ...gPrima.partite.filter((p) => p.stato === "in" && !visti.has(p.id))];
   let infortuni = {}; try { infortuni = await caricaInfortuni(); } catch {}
-  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))], fm.mappa);
+  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))], fm.mappa, fm.quote);
   const picks = consigli(gare);
   const inCorso = gare.filter((x) => x.stato === "in");
   const out = await Promise.all(inCorso.map(async (x) => {
@@ -170,9 +205,15 @@ async function apiLive(env) {
     const gioc = Object.values(box).filter((b) => b.tit || (b.min != null && b.min > 0)).sort((a, b) => (b.tit - a.tit) || (b.pts || 0) - (a.pts || 0))
       .map((b) => ({ nome: b.nome, sq: b.sq, pts: b.pts, reb: b.reb, ast: b.ast, min: b.min, tit: !!b.tit }));
     const proiTot = x.ptCasa + x.ptTr + x.r.totale * (1 - f);
+    // linea del bookmaker durante la partita (solo se scaricata dopo l'inizio e non troppo vecchia)
+    let mercato = null; const qg = fm.quote && (fm.quote.giochi || {})[chiaveGara(x.casa, x.trasf)];
+    if (qg && qg.tot && fm.quote.t && Date.parse(fm.quote.t) > Date.parse(x.iso) && Date.now() - Date.parse(fm.quote.t) < 50 * 60000) {
+      const sdT = Math.max(STD.Totale * Math.sqrt(Math.max(0, 1 - f)), 1.5);
+      mercato = { linea: qg.tot.linea, pMk: qg.tot.pOver, pNostra: 1 - phi((qg.tot.linea - (x.ptCasa + x.ptTr + x.r.totale * (1 - f))) / sdT), minuti: Math.round((Date.now() - Date.parse(fm.quote.t)) / 60000), n: qg.tot.n };
+    }
     const pwLive = phi((x.ptCasa - x.ptTr + x.r.margine * (1 - f)) / Math.max(STD.Spread * Math.sqrt(1 - f), 0.6));
     return { id: x.id, casa: x.casa, trasf: x.trasf, ptCasa: x.ptCasa, ptTr: x.ptTr, periodo: x.periodo, orologio: x.orologio, dettaglio: x.dettaglio, f, proiTot, pwLive,
-      r: x.r, giocatori: gioc, picks: mie, segnali: segnaliLive(ga, box, x.giocatori).slice(0, 8) };
+      r: x.r, mercato, giocatori: gioc, picks: mie, segnali: segnaliLive(ga, box, x.giocatori).slice(0, 8) };
   }));
   const sq = {}; out.forEach((x) => { sq[x.casa] = info(x.casa); sq[x.trasf] = info(x.trasf); });
   return { aggiornato: new Date().toISOString(), squadre: sq, partite: out, totali: gare.length, finite: gare.filter((x) => x.stato === "post").length, prossime: gare.filter((x) => x.stato === "pre").map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora })) };
@@ -190,12 +231,14 @@ export default {
       if (p === "/api/giorno") return J(await apiGiorno(env, ctx, off, data), 45);
       if (p === "/api/esiti") return J(await apiEsiti(off, data), 120);
       if (p === "/api/storico") return J(await apiStorico(env));
+      if (p === "/api/aggiorna-quote") return J(await cronQuote(env, true));
       if (p === "/api/ultime") { const s = (url.searchParams.get("s") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(s)) return ERR("sigla non valida", 400); return J({ s, ultime: await caricaUltime(s) }, 600); }
       return ERR("non trovato", 404);
     } catch (e) { return ERR(String(e.message || e)); }
   },
   // ogni 30 minuti: salva i consigli delle partite che non sono iniziate e verifica quelle finite
   async scheduled(event, env, ctx) {
+    if (event.cron === "20,50 * * * *") { ctx.waitUntil(cronQuote(env).catch(() => {})); return; }
     if (event.cron === "10,40 * * * *") { ctx.waitUntil(aggiornaForma(env).catch(() => {})); return; }
     ctx.waitUntil((async () => {
       try { await apiGiorno(env, ctx, 0); } catch {}
