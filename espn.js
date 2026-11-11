@@ -94,16 +94,25 @@ export function aggiungiGiorni(yyyymmdd, n) {
   return d.toISOString().slice(0, 10).replaceAll("-", "");
 }
 
+export const romaYMD = (ms) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms)).replaceAll("-", "");
+
+// Giorno secondo il calendario italiano: una partita appartiene al giorno in cui INIZIA in Italia.
 export async function caricaGiorno(offset, data = null) {
-  const par = data ? { dates: data } : offset === 0 ? {} : { dates: dataUS(offset) };
-  const sb = await get(`${ESPN}/scoreboard`, par, 60);
-  const base = leggiScoreboard(sb);
-  let ieri = [];
-  try {
-    const dIeri = data ? aggiungiGiorni(data, -1) : offset === 0 ? dataUS(-1) : dataUS(offset - 1);
-    ieri = leggiScoreboard(await get(`${ESPN}/scoreboard`, { dates: dIeri }, 120)).partite.filter((p) => p.stato === "post");
-  } catch {}
-  return { ...base, ieri };
+  const D = data || romaYMD(Date.now() + offset * 86400000);
+  const Dieri = aggiungiGiorni(D, -1);
+  const chiedi = (d, ttl) => get(`${ESPN}/scoreboard`, { dates: d }, ttl).then(leggiScoreboard);
+  const [pri, ora, prev] = await Promise.all([
+    chiedi(aggiungiGiorni(D, -1), 60), chiedi(D, 60), chiedi(aggiungiGiorni(D, -2), 300).catch(() => ({ partite: [], linee: {} })),
+  ]);
+  const tutte = new Map(), linee = {};
+  for (const r of [prev, pri, ora]) {
+    for (const p of r.partite) { p.giornoRoma = romaYMD(Date.parse(p.iso)); tutte.set(p.id, p); }
+    Object.assign(linee, r.linee);
+  }
+  const lista = [...tutte.values()];
+  const partite = lista.filter((p) => p.giornoRoma === D).sort((x, y) => (x.iso < y.iso ? -1 : 1));
+  const ieri = lista.filter((p) => p.giornoRoma === Dieri && p.stato === "post");
+  return { partite, linee, ieri };
 }
 
 export async function caricaBoxscore(eventId, ttl = 600) {
