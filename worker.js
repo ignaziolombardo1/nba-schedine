@@ -1,14 +1,14 @@
 import { info, nome } from "./squadre.js";
 import { proiettaPartita, proiettaGiocatori, consigli, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
-import { caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, dataUS } from "./espn.js";
+import { caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, caricaGamelog, dataUS, get } from "./espn.js";
 
 const J = (o, ttl = 0) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": ttl ? `public, max-age=${ttl}` : "no-store", "access-control-allow-origin": "*" } });
 const ERR = (m, s = 500) => new Response(JSON.stringify({ errore: m }), { status: s, headers: { "content-type": "application/json" } });
 
 // ---- Supabase (secrets SUPABASE_URL e SUPABASE_KEY)
 const dbOk = (env) => !!(env.SUPABASE_URL && env.SUPABASE_KEY);
-async function db(env, metodo, { params, corpo, prefer } = {}) {
-  const u = new URL(`${env.SUPABASE_URL.replace(/\/$/, "")}/rest/v1/nba_consigli`);
+async function db(env, metodo, { params, corpo, prefer, tabella = "nba_consigli" } = {}) {
+  const u = new URL(`${env.SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${tabella}`);
   for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
   const h = { apikey: env.SUPABASE_KEY, Authorization: `Bearer ${env.SUPABASE_KEY}`, "Content-Type": "application/json" };
   if (prefer) h.Prefer = prefer;
@@ -17,12 +17,12 @@ async function db(env, metodo, { params, corpo, prefer } = {}) {
   const t = await r.text(); return t ? JSON.parse(t) : [];
 }
 
-function costruisci(partite, teams, players, infortuni, b2b) {
+function costruisci(partite, teams, players, infortuni, b2b, forma = {}) {
   const out = [];
   for (const p of partite) {
     if (!teams[p.casa] || !teams[p.trasf]) continue;
     const r = proiettaPartita(p.casa, p.trasf, teams, b2b);
-    const giocatori = players.length ? [...proiettaGiocatori(p.casa, p.trasf, teams, players, infortuni), ...proiettaGiocatori(p.trasf, p.casa, teams, players, infortuni)] : [];
+    const giocatori = players.length ? [...proiettaGiocatori(p.casa, p.trasf, teams, players, infortuni, forma, r.margine), ...proiettaGiocatori(p.trasf, p.casa, teams, players, infortuni, forma, -r.margine)] : [];
     const inf = players.filter((q) => (q.sq === p.casa || q.sq === p.trasf) && q.min >= 20 && infortuni[q.nome.trim().toLowerCase()])
       .map((q) => ({ nome: q.nome, sq: q.sq, ...infortuni[q.nome.trim().toLowerCase()] }));
     out.push({ ...p, r, giocatori, inf });
@@ -30,13 +30,58 @@ function costruisci(partite, teams, players, infortuni, b2b) {
   return out;
 }
 
+
+async function leggiForma(env) {
+  if (!dbOk(env)) return { mappa: {}, stato: null };
+  try {
+    const righe = await db(env, "GET", { tabella: "nba_forma", params: { select: "pid,dati,agg", limit: "3000" } });
+    const mappa = {}; let stato = null;
+    for (const r of righe) { if (r.pid === "_stato") stato = r.dati; else mappa[r.pid] = r.dati; }
+    return { mappa, stato, n: Object.keys(mappa).length };
+  } catch (e) { return { mappa: {}, stato: null, errore: e.message }; }
+}
+
+// Ogni 30 minuti (cron): aggiorna la forma recente dei giocatori che giocano oggi e domani. Pochi per volta per restare nei limiti.
+async function aggiornaForma(env) {
+  if (!dbOk(env)) return;
+  const [stat, g0, g1] = await Promise.all([caricaStatistiche(), caricaGiorno(0), caricaGiorno(1)]);
+  const squadre = []; for (const p of [...g0.partite, ...g1.partite]) { if (p.stato === "post") continue; squadre.push(p.casa, p.trasf); }
+  const elenco = {}; let errore = null;
+  try { for (const r of await db(env, "GET", { tabella: "nba_forma", params: { select: "pid,agg", limit: "3000" } })) elenco[r.pid] = r.agg; } catch (e) { errore = e.message; }
+  const vecchio = Date.now() - 18 * 3600e3;
+  const candidati = [];
+  for (const sq of [...new Set(squadre)]) {
+    const gs = stat.players.filter((q) => q.sq === sq && q.min >= 20 && q.pid).sort((a, b) => b.min - a.min).slice(0, 9);
+    for (const q of gs) if (!elenco[q.pid] || Date.parse(elenco[q.pid]) < vecchio) candidati.push(q);
+  }
+  const lotto = candidati.slice(0, 26), righe = []; let falliti = 0, ultimoErr = errore;
+  await Promise.all(lotto.map(async (q) => {
+    try { righe.push({ pid: q.pid, nome: q.nome, sq: q.sq, dati: await caricaGamelog(q.pid), agg: new Date().toISOString() }); }
+    catch (e) { falliti++; ultimoErr = e.message; }
+  }));
+  righe.push({ pid: "_stato", nome: "stato", sq: "", dati: { ultimo: new Date().toISOString(), ok: righe.length, falliti, da_fare: Math.max(0, candidati.length - lotto.length), errore: ultimoErr }, agg: new Date().toISOString() });
+  await db(env, "POST", { tabella: "nba_forma", params: { on_conflict: "pid" }, corpo: righe, prefer: "resolution=merge-duplicates" });
+}
+
+async function apiDiag(env) {
+  const v = [], prova = async (nome, fn) => { try { v.push({ nome, ok: true, dettaglio: String(await fn()) }); } catch (e) { v.push({ nome, ok: false, dettaglio: String(e.message || e) }); } };
+  let gg = null, stat = null;
+  await prova("Partite di oggi (ESPN)", async () => { gg = await caricaGiorno(0); return `${gg.partite.length} partite, ${gg.ieri.length} finite ieri, ${Object.keys(gg.linee).length} linee`; });
+  await prova("Statistiche squadre e giocatori", async () => { stat = await caricaStatistiche(); return stat.diag.join(" · "); });
+  await prova("Infortuni", async () => `${Object.keys(await caricaInfortuni()).length} segnalati`);
+  await prova("Registro consigli (Supabase)", async () => { if (!dbOk(env)) throw new Error("secrets SUPABASE_URL / SUPABASE_KEY mancanti"); const r = await db(env, "GET", { params: { select: "chiave", limit: "5000" } }); return `${r.length} consigli salvati`; });
+  await prova("Forma recente giocatori", async () => { if (!dbOk(env)) throw new Error("serve Supabase"); const f = await leggiForma(env); if (f.errore) throw new Error(f.errore + " (hai creato la tabella nba_forma?)"); const s = f.stato || {}; return `${f.n} giocatori con le ultime 10 partite${s.ultimo ? `, ultimo aggiornamento ${s.ultimo.slice(0, 16)}, ${s.falliti} falliti, ${s.da_fare} da fare` : ", nessun aggiornamento ancora"}${s.errore ? ", errore: " + s.errore : ""}`; });
+  await prova("Calendario squadra (ultimi incontri)", async () => `${(await caricaUltime("BOS")).length} partite trovate per BOS`);
+  return { aggiornato: new Date().toISOString(), voci: v };
+}
+
 async function apiGiorno(env, ctx, offset, data = null) {
   const errori = [];
-  const [g, stat] = await Promise.all([caricaGiorno(offset, data), caricaStatistiche()]);
+  const [g, stat, fm] = await Promise.all([caricaGiorno(offset, data), caricaStatistiche(), leggiForma(env)]);
   let infortuni = {};
   try { infortuni = await caricaInfortuni(); } catch (e) { errori.push("infortuni: " + e.message); }
   const b2b = [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))];
-  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, b2b);
+  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, b2b, fm.mappa);
   const picks = consigli(gare);
   const sigle = new Set(); gare.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
   g.ieri.forEach((x) => { sigle.add(x.casa); sigle.add(x.trasf); });
@@ -59,7 +104,7 @@ async function apiGiorno(env, ctx, offset, data = null) {
   return { aggiornato: new Date().toISOString(), offset, squadre: sq, linee: g.linee, ieri: g.ieri, b2b,
     partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr,
       r: { ...x.r, pw: phi(x.r.margine / STD.Spread) }, giocatori: x.giocatori, inf: x.inf })),
-    picks, diag: [...stat.diag, `partite: ${gare.length}`, `linee: ${Object.keys(g.linee).length}`, `infortuni: ${Object.keys(infortuni).length}`, `registro: ${registro}`, ...errori] };
+    picks, diag: [...stat.diag, `forma: ${fm.n || 0} giocatori`, `partite: ${gare.length}`, `linee: ${Object.keys(g.linee).length}`, `infortuni: ${Object.keys(infortuni).length}`, `registro: ${registro}`, ...errori] };
 }
 
 // partite finite -> consigli ricalcolati e confrontati con i risultati
@@ -109,12 +154,13 @@ async function apiStorico(env) {
 }
 
 
-async function apiLive() {
+async function apiLive(env) {
   const [g, gPrima, stat] = await Promise.all([caricaGiorno(0, null, 5), caricaGiorno(-1, null, 5).catch(() => ({ partite: [] })), caricaStatistiche()]);
+  const fm = await leggiForma(env);
   const visti = new Set(g.partite.map((p) => p.id));
   g.partite = [...g.partite, ...gPrima.partite.filter((p) => p.stato === "in" && !visti.has(p.id))];
   let infortuni = {}; try { infortuni = await caricaInfortuni(); } catch {}
-  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))]);
+  const gare = costruisci(g.partite, stat.teams, stat.players, infortuni, [...new Set(g.ieri.flatMap((p) => [p.casa, p.trasf]))], fm.mappa);
   const picks = consigli(gare);
   const inCorso = gare.filter((x) => x.stato === "in");
   const out = await Promise.all(inCorso.map(async (x) => {
@@ -138,8 +184,9 @@ export default {
     if (!p.startsWith("/api/")) return env.ASSETS.fetch(req);
     try {
       const off = Math.max(-2, Math.min(3, parseInt(url.searchParams.get("g") || "0") || 0));
-      if (p === "/api/live") { const d = await apiLive(); for (const q of d.prossime) { d.squadre[q.casa] = info(q.casa); d.squadre[q.trasf] = info(q.trasf); } return J(d, 3); }
+      if (p === "/api/live") { const d = await apiLive(env); for (const q of d.prossime) { d.squadre[q.casa] = info(q.casa); d.squadre[q.trasf] = info(q.trasf); } return J(d, 3); }
       const dp = url.searchParams.get("d"), data = dp && /^\d{8}$/.test(dp) ? dp : null;
+      if (p === "/api/diag") return J(await apiDiag(env));
       if (p === "/api/giorno") return J(await apiGiorno(env, ctx, off, data), 45);
       if (p === "/api/esiti") return J(await apiEsiti(off, data), 120);
       if (p === "/api/storico") return J(await apiStorico(env));
@@ -149,6 +196,7 @@ export default {
   },
   // ogni 30 minuti: salva i consigli delle partite che non sono iniziate e verifica quelle finite
   async scheduled(event, env, ctx) {
+    if (event.cron === "10,40 * * * *") { ctx.waitUntil(aggiornaForma(env).catch(() => {})); return; }
     ctx.waitUntil((async () => {
       try { await apiGiorno(env, ctx, 0); } catch {}
       try { await apiGiorno(env, ctx, 1); } catch {}
