@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "20";
+const VERSIONE = "21";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Squadre e totali", "ti-chart-bar", ["Vincente", "Squadra", "Totale"]], ["Punti", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]]];
@@ -17,7 +17,7 @@ const pct = (p) => Math.round(p * 100) + "%";
 // ---------- dati
 let giorno = ls.get("giorno", 0);
 if (typeof giorno !== "number" && !/^\d{8}$/.test(String(giorno))) giorno = 0;
-const IMP0 = { soglia: 0.70, mercati: { Punti: true, Rimbalzi: true, Assist: true, Totale: true, Squadra: true, Vincente: true }, puntata: 5 };
+const IMP0 = { soglia: 0.70, mercati: { Punti: true, Rimbalzi: true, Assist: true, Totale: true, Squadra: true, Vincente: true }, puntata: 5, bankroll: 100, kelly: 0.25 };
 const impo = () => { const i = ls.get("imp", {}); return { ...IMP0, ...i, mercati: { ...IMP0.mercati, ...(i.mercati || {}) } }; };
 function applicaImp(D) { const i = impo(); if (!D || !D.picks) return D; return { ...D, picks: D.picks.filter((x) => x.prob >= i.soglia && i.mercati[x.tipo] !== false) }; }
 const cache = {};
@@ -214,6 +214,32 @@ function disegnaPartite(D, conPoll, daCache) {
   if (conPoll) seguiPunteggi(D);
 }
 
+
+// ---------- CALCOLATORE (valore, Kelly, multipla)
+function vistaCalcolatore() {
+  const back = `<a class="back" href="#/storico"><i class="ti ti-chevron-left"></i>Storico</a>`;
+  const S = ls.get("calc", { legs: [{ p: "", q: "" }] });
+  APP.innerHTML = back + `<h2>Calcolatore</h2><div class="cap" style="margin-top:0">Inserisci per ogni selezione la probabilità che stimi (o quella dell'app) e la quota offerta dal bookmaker. Vedi subito se c'è valore e quanto puntare.</div><div id="legs"></div><button class="btn" id="add" style="margin:6px 0">Aggiungi selezione</button><div id="ris"></div>`;
+  const calcola = () => {
+    ls.set("calc", S);
+    const L = S.legs.map((l) => ({ p: parseFloat(String(l.p).replace(",", ".")) / 100, q: parseFloat(String(l.q).replace(",", ".")) })).filter((l) => l.p > 0 && l.p < 1 && l.q > 1);
+    let h = "";
+    if (!L.length) { $("#ris").innerHTML = ""; return; }
+    L.forEach((l, i) => { if (S.legs.length > 1) h += `<div class="s">Selezione ${i + 1}</div>`; h += rigaValore(valoreGiocata(l.p, l.q)); });
+    if (L.length > 1) {
+      const p = L.reduce((a, l) => a * l.p, 1), q = L.reduce((a, l) => a * l.q, 1), v = valoreGiocata(p, q);
+      h += `<div class="card"><div class="s">Multipla di ${L.length} selezioni</div><div class="row3"><div class="tile"><b>${q.toFixed(2)}</b><span>quota totale</span></div><div class="tile"><b>${(p * 100).toFixed(0)}%</b><span>probabilità</span></div><div class="tile"><b>${(1 / p).toFixed(2)}</b><span>quota giusta</span></div></div>${rigaValore(v)}<div class="cap" style="margin:0">Le selezioni sono considerate indipendenti: se sono della stessa partita (es. squadra e totale) la probabilità reale è diversa.</div></div>`;
+    }
+    $("#ris").innerHTML = h;
+  };
+  const disegna = () => {
+    $("#legs").innerHTML = S.legs.map((l, i) => `<div class="grid2" style="align-items:center"><input class="linea" inputmode="decimal" placeholder="Probabilità % (es. 72)" data-p="${i}" value="${esc(l.p)}"><input class="linea" inputmode="decimal" placeholder="Quota (es. 1.85)" data-q="${i}" value="${esc(l.q)}"></div>`).join("");
+    $("#legs").querySelectorAll("input").forEach((el) => el.oninput = () => { const i = +(el.dataset.p ?? el.dataset.q); S.legs[i][el.dataset.p != null ? "p" : "q"] = el.value; calcola(); });
+  };
+  $("#add").onclick = () => { S.legs.push({ p: "", q: "" }); disegna(); };
+  disegna(); calcola();
+}
+
 // ---------- IMPOSTAZIONI (salvate sul telefono)
 function vistaImpostazioni() {
   const i = impo();
@@ -222,18 +248,27 @@ function vistaImpostazioni() {
   h += `<div class="card"><div class="sub" style="margin-top:0">Probabilità minima delle giocate</div><div class="tabs">${[0.70, 0.75, 0.80, 0.85].map((v) => `<button class="chipbtn${i.soglia === v ? " on" : ""}" data-sg="${v}">${Math.round(v * 100)}%</button>`).join("")}</div></div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Quali giocate vedere</div>${Object.keys(IMP0.mercati).map((m) => `<label class="sw"><input type="checkbox" data-mk="${m}" ${i.mercati[m] !== false ? "checked" : ""}> ${esc({ Vincente: "Squadra vincente", Squadra: "Punti di una squadra", Totale: "Totale della partita" }[m] || m)}</label>`).join("")}</div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Puntata predefinita nel registro (€)</div><input class="linea" inputmode="decimal" id="pun" value="${i.puntata}" style="margin-top:0"></div>`;
+  h += `<div class="card"><div class="sub" style="margin-top:0">Bankroll (€)</div><input class="linea" inputmode="decimal" id="bk" value="${i.bankroll}" style="margin-top:0"><div class="sub">Quanto del consiglio di Kelly seguire</div><div class="tabs">${[[0.1, "10%"], [0.25, "25%"], [0.5, "50%"]].map(([v, t]) => `<button class="chipbtn${i.kelly === v ? " on" : ""}" data-kl="${v}">${t}</button>`).join("")}</div><div class="cap">Il bankroll serve a calcolare la puntata consigliata e la curva nel registro. Meglio una frazione prudente di Kelly: 25% è lo standard dei tipster.</div></div>`;
   h += `<button class="btn" id="ripr">Ripristina le impostazioni iniziali</button>`;
   APP.innerHTML = h;
   const salva = (m) => { ls.set("imp", { ...impo(), ...m }); };
   APP.querySelectorAll("[data-sg]").forEach((b) => b.onclick = () => { salva({ soglia: +b.dataset.sg }); vistaImpostazioni(); });
   APP.querySelectorAll("[data-mk]").forEach((c) => c.onchange = () => { const mk = { ...impo().mercati, [c.dataset.mk]: c.checked }; salva({ mercati: mk }); });
   $("#pun").oninput = (e) => { const v = parseFloat(String(e.target.value).replace(",", ".")); if (v > 0) salva({ puntata: v }); };
+  $("#bk").oninput = (e) => { const v = parseFloat(String(e.target.value).replace(",", ".")); if (v > 0) salva({ bankroll: v }); };
+  APP.querySelectorAll("[data-kl]").forEach((b) => b.onclick = () => { salva({ kelly: +b.dataset.kl }); vistaImpostazioni(); });
   $("#ripr").onclick = () => { ls.set("imp", {}); vistaImpostazioni(); };
 }
 
 // ---------- REGISTRO PERSONALE (salvato sul telefono)
 const chiaveGiocata = (x) => `${x.g}|${x.tipo}|${x.pid || x.squadra || (x.tipo === "Totale" ? x.testo : "")}`;
 const eur = (v) => (v >= 0 ? "+" : "-") + Math.abs(v).toFixed(2).replace(".", ",") + " €";
+// valore atteso e puntata di Kelly: p = probabilità stimata, q = quota decimale
+function valoreGiocata(p, q) {
+  const ev = p * q - 1, b = q - 1, k = b > 0 ? Math.max(0, (p * q - 1) / b) : 0, i = impo();
+  return { ev, edge: p - 1 / q, kelly: k, puntata: k * (i.kelly || 0.25) * (i.bankroll || 100) };
+}
+const rigaValore = (v) => `<div class="s" style="line-height:1.5;margin:2px 0 8px">Valore atteso <b style="color:${v.ev > 0 ? GR : RD}">${v.ev >= 0 ? "+" : ""}${(v.ev * 100).toFixed(1)}%</b> · vantaggio ${v.edge >= 0 ? "+" : ""}${(v.edge * 100).toFixed(1)} punti${v.ev > 0 ? ` · puntata consigliata <b style="color:#f2f2f2">${v.puntata.toFixed(2).replace(".", ",")} €</b> (Kelly ${Math.round((impo().kelly || 0.25) * 100)}% del bankroll)` : " · a questa quota non conviene giocarla"}</div>`;
 function btnRegistro(o) {
   const gia = ls.get("registro", []).some((r) => r.id === o.id);
   return `<button class="btn regbtn" data-reg="${esc(JSON.stringify(o))}" style="margin:8px 0 0">${gia ? `<i class="ti ti-check"></i> Nel registro` : `<i class="ti ti-notebook"></i> Ho giocato questa`}</button><div class="regform" style="display:none"></div>`;
@@ -243,7 +278,8 @@ function bindRegistro() {
     const o = JSON.parse(b.dataset.reg), f = b.nextElementSibling;
     if (ls.get("registro", []).some((r) => r.id === o.id)) { location.hash = "#/registro"; return; }
     f.style.display = "block";
-    f.innerHTML = `<div class="grid2"><input class="linea" inputmode="decimal" placeholder="Quota (es. 2.10)" data-q><input class="linea" inputmode="decimal" placeholder="Puntata in € (es. 5)" data-p value="${impo().puntata}"></div><button class="btn" data-ok style="margin:0 0 6px">Salva nel registro</button>`;
+    f.innerHTML = `<div class="grid2"><input class="linea" inputmode="decimal" placeholder="Quota (es. 2.10)" data-q><input class="linea" inputmode="decimal" placeholder="Puntata in € (es. 5)" data-p value="${impo().puntata}"></div><div data-val></div><button class="btn" data-ok style="margin:0 0 6px">Salva nel registro</button>`;
+    f.querySelector("[data-q]").oninput = (e) => { const q = parseFloat(String(e.target.value).replace(",", ".")); f.querySelector("[data-val]").innerHTML = q > 1 && o.prob > 0 ? rigaValore(valoreGiocata(o.prob, q)) : ""; };
     f.querySelector("[data-ok]").onclick = () => {
       const q = parseFloat(String(f.querySelector("[data-q]").value).replace(",", ".")), p = parseFloat(String(f.querySelector("[data-p]").value).replace(",", "."));
       if (!(q > 1) || !(p > 0)) { f.querySelector("[data-ok]").textContent = "Inserisci quota (maggiore di 1) e puntata"; return; }
@@ -251,6 +287,25 @@ function bindRegistro() {
       b.innerHTML = `<i class="ti ti-check"></i> Nel registro`; f.style.display = "none";
     };
   });
+}
+
+// curva del bankroll, serie e rendimento per tipo di giocata
+function statisticheRegistro(chiuse) {
+  if (chiuse.length < 2) return "";
+  const ord = [...chiuse].reverse(); // il registro è dal più recente: qui dal più vecchio
+  const b0 = impo().bankroll || 100; let b = b0, picco = b0, dd = 0; const pt = [b0];
+  for (const r of ord) { b += r.esito === 1 ? r.puntata * (r.quota - 1) : -r.puntata; pt.push(b); picco = Math.max(picco, b); dd = Math.max(dd, picco - b); }
+  const lo = Math.min(...pt), hi = Math.max(...pt), W = 320, H = 90, sx = (i) => (i / (pt.length - 1)) * W, sy = (v) => H - 6 - ((v - lo) / (hi - lo || 1)) * (H - 12);
+  const col = b >= b0 ? GR : RD, d = pt.map((v, i) => `${i ? "L" : "M"}${sx(i).toFixed(1)} ${sy(v).toFixed(1)}`).join(" ");
+  let serie = 0, tipo = ord[ord.length - 1].esito; for (let i = ord.length - 1; i >= 0 && ord[i].esito === tipo; i--) serie++;
+  const per = {}; for (const r of chiuse) { const c = (per[r.tipo || "Altro"] ||= { n: 0, ok: 0, pr: 0, pu: 0 }); c.n++; c.ok += r.esito; c.pu += r.puntata; c.pr += r.esito === 1 ? r.puntata * (r.quota - 1) : -r.puntata; }
+  const nomi = { Totale: "Totale partita", Squadra: "Punti squadra", Vincente: "Vincente", Punti: "Punti giocatore", Rimbalzi: "Rimbalzi", Assist: "Assist", Schedina: "Schedine" };
+  const qm = chiuse.reduce((a, r) => a + r.quota, 0) / chiuse.length, pm = chiuse.reduce((a, r) => a + (r.prob || 0), 0) / chiuse.length;
+  return `<div class="card"><div class="riga"><div class="s">Bankroll (partendo da ${b0} €)</div><b style="color:${col}">${b.toFixed(2).replace(".", ",")} €</b></div>
+  <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:90px;margin-top:6px"><path d="${d} L${W} ${H} L0 ${H} Z" fill="${col}" opacity=".12"/><path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/></svg>
+  <div class="row3" style="margin-top:8px"><div class="tile"><b style="color:${tipo === 1 ? GR : RD}">${serie}${tipo === 1 ? "V" : "P"}</b><span>serie in corso</span></div><div class="tile"><b>-${dd.toFixed(0)} €</b><span>calo massimo</span></div><div class="tile"><b>${qm.toFixed(2)}</b><span>quota media</span></div></div>
+  <div class="s" style="margin-top:8px">Centrate ${(chiuse.filter((r) => r.esito === 1).length / chiuse.length * 100).toFixed(0)}% · previste in media ${(pm * 100).toFixed(0)}% · quota pareggio ${(1 / Math.max(0.01, chiuse.filter((r) => r.esito === 1).length / chiuse.length)).toFixed(2)}</div></div>
+  <div class="sub">Rendimento per tipo di giocata</div>` + Object.entries(per).sort((x, y) => y[1].n - x[1].n).map(([t, c]) => `<div class="card riga" style="padding:9px 12px"><div><div style="font-weight:500">${esc(nomi[t] || t)}</div><div class="s">${c.ok}/${c.n} centrate · ${c.pu.toFixed(0)} € puntati</div></div><b style="color:${c.pr >= 0 ? GR : RD}">${eur(c.pr)} <span class="s">(${(c.pr / c.pu * 100).toFixed(0)}%)</span></b></div>`).join("");
 }
 async function vistaRegistro() {
   const back = `<a class="back" href="#/storico"><i class="ti ti-chevron-left"></i>Storico</a>`;
@@ -268,6 +323,7 @@ async function vistaRegistro() {
   if (!reg.length) h += `<div class="vuoto">Ancora vuoto. Nelle pagine Schedine e Studio tocca «Ho giocato questa», scrivi quota e puntata: a fine partita l'app calcola da sola guadagno e perdita. Resta salvato solo su questo telefono.</div>`;
   else {
     h += `<div class="card riga" style="gap:14px;justify-content:flex-start"><div><div class="s">Risultato delle giocate chiuse</div><div style="font-family:'Barlow Condensed',Inter,sans-serif;font-size:36px;font-weight:700;color:${prof >= 0 ? GR : RD}">${chiuse.length ? eur(prof) : "–"}</div><div class="s">${vinte.length} centrate su ${chiuse.length}${puntato ? ` · rendimento ${(prof / puntato * 100).toFixed(0)}% su ${puntato.toFixed(2).replace(".", ",")} € puntati` : ""} · ${reg.length - chiuse.length} in attesa</div></div></div>`;
+    h += statisticheRegistro(chiuse);
     h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div><div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div></div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div></div>`).join("");
   }
   APP.innerHTML = h;
@@ -611,7 +667,7 @@ async function vistaStorico() {
     }
   }
   h += precisioneModello(S) + schedineStorico(S);
-  h += `<div class="cap" style="text-align:center;margin-top:14px"><a href="#/registro" style="color:${OR}"><i class="ti ti-notebook"></i> Il mio registro (quote e puntate)</a> &nbsp;·&nbsp; <a href="#/impostazioni" style="color:${OR}"><i class="ti ti-settings"></i> Impostazioni</a></div>`;
+  h += `<div class="cap" style="text-align:center;margin-top:14px"><a href="#/registro" style="color:${OR}"><i class="ti ti-notebook"></i> Il mio registro</a> &nbsp;·&nbsp; <a href="#/calcolatore" style="color:${OR}"><i class="ti ti-calculator"></i> Calcolatore</a> &nbsp;·&nbsp; <a href="#/impostazioni" style="color:${OR}"><i class="ti ti-settings"></i> Impostazioni</a></div>`;
   h += `<div class="cap" style="text-align:center;margin-top:18px"><a href="#/diag" style="color:${OR}"><i class="ti ti-stethoscope"></i> Controllo dei dati</a></div>`;
   APP.innerHTML = h;
 }
@@ -635,6 +691,7 @@ function route(force) {
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const m = /^\/partita\/(\d+)/.exec(hsh), gp = /^\/giocatore\/(\d+)/.exec(hsh);
   if (hsh.startsWith("/impostazioni")) vistaImpostazioni();
+  else if (hsh.startsWith("/calcolatore")) vistaCalcolatore();
   else if (hsh.startsWith("/registro")) vistaRegistro();
   else if (gp) vistaGiocatore(gp[1]);
   else if (m) vistaStudio(m[1], force === true);
