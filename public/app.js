@@ -4,10 +4,10 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "28";
+const VERSIONE = "29";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
-const SC = [["Squadre e totali", "ti-chart-bar", ["Vincente", "Squadra", "Totale"]], ["Punti", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]]];
+const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
 
 // ---------- matematica
 function erf(x) { const s = x < 0 ? -1 : 1; x = Math.abs(x); const t = 1 / (1 + 0.3275911 * x); return s * (1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x)); }
@@ -196,12 +196,22 @@ async function vistaPartite(force) {
   let D; try { D = await dati(force); } catch (e) { if (!salvato) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); } return; }
   if (!location.hash.replace(/^#/, "").replace(/^\//, "")) { const y = window.scrollY; disegnaPartite(D, true); if (salvato) window.scrollTo(0, y); }
 }
+
+// accesso rapido ai consigli divisi per tipo, con il numero di giocate
+function riquadriConsigli(D) {
+  const P = applicaImp(D).picks || []; if (!P.length) return "";
+  return `<div class="riga" style="margin:14px 0 8px"><h2 style="margin:0">Consigli per tipo</h2><a class="s" href="#/combo" style="color:var(--or)">Tutti <i class="ti ti-chevron-right"></i></a></div><div class="grid2">` + SC.map(([t, ic, tipi], i) => {
+    const l = P.filter((x) => tipi.includes(x.tipo)); if (!l.length) return "";
+    return `<a class="card" href="#/categoria/${i}" style="padding:12px;display:block"><div class="s"><i class="ti ${ic}" style="color:var(--or)"></i> ${esc(t)}</div><div style="font-size:22px;font-weight:700;margin-top:2px">${l.length}</div><div class="s">migliore ${pct(l[0].prob)}</div></a>`;
+  }).join("") + `</div>`;
+}
 function disegnaPartite(D, conPoll, daCache) {
   const top = (id) => D.picks.find((x) => x.g === id);
   let h = topBar(D) + giorniChips();
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
   h += avvisiDati(D, daCache);
   h += hero(D);
+  h += riquadriConsigli(D);
   h += migliori(D);
   h += confrontoMercato(D);
   if (D.partite.length) h += `<h2>Tutte le partite</h2>`;
@@ -397,7 +407,7 @@ async function vistaSchedine(force) {
 
 // ---------- RIEPILOGO PER CATEGORIA: tutte le giocate consigliate di un tipo, con le percentuali
 async function vistaCategoria(n) {
-  const back = `<a class="back" href="#/combo"><i class="ti ti-chevron-left"></i>Combo</a>`, c = SC[n]; if (!c) { location.hash = "#/combo"; return; }
+  const back = `<a class="back" href="#/combo"><i class="ti ti-chevron-left"></i>Consigli</a>`, c = SC[n]; if (!c) { location.hash = "#/combo"; return; }
   APP.innerHTML = back + giorniChips() + skel(); bindGiorni();
   let D; try { D = await dati(false); } catch (e) { APP.innerHTML = back + errBox(e); return; }
   const ord = ls.get("catOrd", "p"), min = ls.get("catMin", 0.7);
