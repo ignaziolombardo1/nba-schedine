@@ -1,7 +1,7 @@
 import { info, nome } from "./squadre.js";
 import { proiettaPartita, proiettaGiocatori, consigli, proposte, proposteQuota, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
 import { aggiornaQuote, chiaveGara } from "./quote.js";
-import { romaYMD, caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, testaATesta, caricaGamelog, dataUS, get } from "./espn.js";
+import { romaYMD, caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, caricaEsitoPartita, testaATesta, caricaGamelog, dataUS, get } from "./espn.js";
 
 const arr = (k, v) => (typeof v === "number" && !Number.isInteger(v) ? Math.round(v * 1000) / 1000 : v);
 const J = (o, ttl = 0) => new Response(JSON.stringify(o, arr), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": ttl ? `public, max-age=${ttl}` : "no-store", "access-control-allow-origin": "*" } });
@@ -327,6 +327,25 @@ async function apiGiorno(env, ctx, offset, data = null) {
 }
 
 // partite finite -> consigli ricalcolati e confrontati con i risultati
+
+// esito delle giocate di una schedina scritta dall'utente: 1 centrata, 0 persa, null in attesa, 2 annullata (giocatore che non ha giocato)
+async function valutaGiocate(legs) {
+  const L = (Array.isArray(legs) ? legs : []).slice(0, 24).filter((l) => /^\d+$/.test(String(l.g)) && ["pts", "reb", "ast", "tot", "sq", "win"].includes(l.k));
+  const partite = {};
+  await Promise.all([...new Set(L.map((l) => String(l.g)))].slice(0, 10).map(async (g) => { try { partite[g] = await caricaEsitoPartita(g); } catch { partite[g] = null; } }));
+  return L.map((l) => {
+    const p = partite[String(l.g)]; if (!p) return { esito: null, nota: "partita non leggibile" };
+    const over = l.dir !== "under", sg = +l.soglia; let cur = null;
+    if (l.k === "tot") cur = (p.ptCasa ?? 0) + (p.ptTr ?? 0);
+    else if (l.k === "sq") cur = l.sq === p.casa ? p.ptCasa : p.ptTr;
+    else if (l.k === "win") { if (!p.finita) return { esito: null }; const d = l.sq === p.casa ? p.ptCasa - p.ptTr : p.ptTr - p.ptCasa; return { esito: d > 0 ? 1 : 0, cur: d }; }
+    else { const b = p.box[String(l.pid)]; if (!b) return p.finita ? { esito: 2, nota: "giocatore non sceso in campo" } : { esito: null }; if (p.finita && !(b.min > 0)) return { esito: 2, nota: "giocatore non sceso in campo" }; cur = b[l.k]; }
+    if (cur == null) return { esito: p.finita ? 2 : null };
+    if (over) return { esito: cur > sg ? 1 : p.finita ? 0 : null, cur }; // un over superato resta centrato anche prima della fine
+    return { esito: cur > sg ? 0 : p.finita ? 1 : null, cur }; // un under sforato è perso subito
+  });
+}
+
 async function apiEsiti(offset, data = null) {
   const g = await caricaGiorno(offset, data), stat = await caricaStatistiche();
   const finite = [...g.ieri, ...g.partite.filter((p) => p.stato === "post")];
@@ -429,6 +448,7 @@ export default {
       if (p === "/api/storico") return J(await apiStorico(env));
       if (p === "/api/aggiorna-quote") return J(await cronQuote(env, true));
       if (p === "/api/avviso-prova") { if (!env.TELEGRAM_TOKEN || url.searchParams.get("k") !== String(env.TELEGRAM_CHAT_ID)) return ERR("non autorizzato", 403); await telegram(env, "✅ NBA Schedine è collegata a Telegram: da ora ricevi qui il riepilogo prima delle partite e i risultati a fine giornata."); return J({ ok: true }); }
+      if (p === "/api/valuta-giocate" && req.method === "POST") { const b = await req.json(); return J({ esiti: await valutaGiocate(b.legs) }); }
       if (p === "/api/push-chiave") { if (!dbOk(env)) return ERR("serve Supabase", 503); return J({ chiave: (await chiaviVapid(env)).pub }); }
       if (p === "/api/push-iscrivi" && req.method === "POST") { if (!dbOk(env)) return ERR("serve Supabase", 503); await iscriviPush(env, await req.json()); return J({ ok: true }); }
       if (p === "/api/push-prova" && req.method === "POST") { const r = await pushATutti(env, "✅ Notifiche attive", "NBA Schedine ti avviserà con il riepilogo ogni mattina e i risultati a fine giornata."); return J(r); }

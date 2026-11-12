@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "35";
+const VERSIONE = "36";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
@@ -371,6 +371,20 @@ async function vistaRegistro() {
       ls.set("registro", reg);
     } catch {}
   }
+  const conLegs = reg.filter((r) => r.esito == null && r.legs && r.legs.length);
+  if (conLegs.length) {
+    try {
+      const R = await Promise.all(conLegs.map((r) => fetch("/api/valuta-giocate", { method: "POST", body: JSON.stringify({ legs: r.legs }) }).then((x) => x.json())));
+      const mappa = new Map(conLegs.map((r, i) => [r.id, R[i].esiti || []]));
+      reg = reg.map((r) => {
+        const es = mappa.get(r.id); if (!es || es.length !== r.legs.length) return r;
+        if (es.some((x) => x.esito === 0)) return { ...r, esito: 0 };
+        if (es.some((x) => x.esito === 2)) return { ...r, nota: "una giocata annullata (giocatore non sceso in campo): segna tu l'esito" };
+        if (es.every((x) => x.esito === 1)) return { ...r, esito: 1 };
+        return r;
+      }); ls.set("registro", reg);
+    } catch {}
+  }
   const per = ls.get("regPer", 0), dal = per ? new Date(Date.now() - per * 86400000).toISOString().slice(0, 10) : "";
   const chiuse = reg.filter((r) => (r.esito === 0 || r.esito === 1) && String(r.data) >= dal), vinte = chiuse.filter((r) => r.esito === 1);
   const prof = chiuse.reduce((a, r) => a + (r.esito === 1 ? r.puntata * (r.quota - 1) : -r.puntata), 0), puntato = chiuse.reduce((a, r) => a + r.puntata, 0);
@@ -379,7 +393,7 @@ async function vistaRegistro() {
   else {
     h += `<div class="card riga" style="gap:14px;justify-content:flex-start"><div><div class="s">Risultato delle giocate chiuse</div><div style="font-family:'Barlow Condensed',Inter,sans-serif;font-size:36px;font-weight:700;color:${prof >= 0 ? GR : RD}">${chiuse.length ? eur(prof) : "–"}</div><div class="s">${vinte.length} centrate su ${chiuse.length}${puntato ? ` · rendimento ${(prof / puntato * 100).toFixed(0)}% su ${puntato.toFixed(2).replace(".", ",")} € puntati` : ""} · ${reg.filter((r) => r.esito == null).length} in attesa</div></div></div>`;
     h += statisticheRegistro(chiuse);
-    h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div><div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div>${r.esito == null ? `<div style="margin-top:6px"><button class="chipbtn" data-es="${i}|1" style="padding:3px 10px;font-size:11px">Vinta</button> <button class="chipbtn" data-es="${i}|0" style="padding:3px 10px;font-size:11px">Persa</button></div>` : ""}</div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div><div class="riga" style="margin-top:8px;gap:8px;justify-content:flex-start"><span class="s">Quota di chiusura</span><input class="linea" inputmode="decimal" data-cl="${i}" value="${r.chiusura || ""}" placeholder="es. 1.75" style="margin:0;width:90px;padding:4px 8px">${r.chiusura > 1 ? (() => { const c = r.quota / r.chiusura - 1; return `<b style="color:${c >= 0 ? GR : RD}">CLV ${c >= 0 ? "+" : ""}${(c * 100).toFixed(1)}%</b>`; })() : ""}</div></div>`).join("");
+    h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div>${r.nota ? `<div class="s" style="color:${AM}">${esc(r.nota)}</div>` : ""}<div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div>${r.esito == null ? `<div style="margin-top:6px"><button class="chipbtn" data-es="${i}|1" style="padding:3px 10px;font-size:11px">Vinta</button> <button class="chipbtn" data-es="${i}|0" style="padding:3px 10px;font-size:11px">Persa</button></div>` : ""}</div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div><div class="riga" style="margin-top:8px;gap:8px;justify-content:flex-start"><span class="s">Quota di chiusura</span><input class="linea" inputmode="decimal" data-cl="${i}" value="${r.chiusura || ""}" placeholder="es. 1.75" style="margin:0;width:90px;padding:4px 8px">${r.chiusura > 1 ? (() => { const c = r.quota / r.chiusura - 1; return `<b style="color:${c >= 0 ? GR : RD}">CLV ${c >= 0 ? "+" : ""}${(c * 100).toFixed(1)}%</b>`; })() : ""}</div></div>`).join("");
   }
   if (reg.length) h += `<div class="grid2" style="margin-top:6px"><button class="btn" id="csv" style="margin:0">Scarica CSV</button><button class="btn" id="bak" style="margin:0">Copia backup</button></div>`;
   h += `<button class="btn" id="rip" style="margin:8px 0 0">Ripristina da backup incollato</button><div class="cap">Il registro vive solo su questo telefono: ogni tanto copia il backup e conservalo (ad esempio nelle note).</div>`;

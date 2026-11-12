@@ -105,7 +105,8 @@ export async function caricaInfortuni() {
   const d = await get(`${ESPN}/injuries`, {}, 600), out = {};
   for (const t of d.injuries || []) for (const i of t.injuries || []) {
     const n = (i.athlete || {}).displayName; const stato = String(i.status || "").toLowerCase();
-    if (n) // probabilità che giochi: doubtful 25%, questionable 50%, day-to-day 60%, probable 85%
+    if (!n) continue;
+    // probabilità che giochi: doubtful 25%, questionable 50%, day-to-day 60%, probable 85%
     const grado = stato.includes("out") ? 0 : stato.includes("doubt") ? 0.25 : stato.includes("question") ? 0.5 : stato.includes("day") ? 0.6 : stato.includes("probable") ? 0.85 : 0.5;
     out[n.trim().toLowerCase()] = { stato: stato.includes("out") ? "out" : "dubbio", grado, etichetta: i.status || "", dettaglio: i.shortComment || i.status || "" };
   }
@@ -150,6 +151,26 @@ export async function caricaBoxscore(eventId, ttl = 600) {
       const t = (k) => { const i = idx[k]; return i != null && st[i] != null ? String(st[i]) : null; };
       out[n.trim().toLowerCase()] = { nome: n, sq: (team.team || {}).abbreviation, pts: v("PTS"), reb: v("REB"), ast: v("AST"), min: v("MIN"), tit: !!a.starter,
         stl: v("STL"), blk: v("BLK"), to: v("TO"), pf: v("PF"), pm: t("+/-"), tre: t("3PT"), fg: t("FG"), ft: t("FT"), pid: (a.athlete || {}).id ? String((a.athlete || {}).id) : null };
+    }
+  }
+  return out;
+}
+
+// stato e risultato di una partita (anche in corso) dal riepilogo ESPN, più il tabellino dei giocatori
+export async function caricaEsitoPartita(eventId, ttl = 60) {
+  const d = await get(`${ESPN}/summary`, { event: eventId }, ttl);
+  const comp = ((d.header || {}).competitions || [{}])[0], stt = ((comp.status || {}).type) || {}, out = { finita: !!stt.completed, inCorso: stt.state === "in", casa: null, trasf: null, ptCasa: null, ptTr: null, box: {} };
+  for (const c of comp.competitors || []) {
+    const ab = (c.team || {}).abbreviation, sc = punti(c.score && typeof c.score === "object" ? c.score.value ?? c.score.displayValue : c.score);
+    if (c.homeAway === "home") { out.casa = ab; out.ptCasa = sc; } else { out.trasf = ab; out.ptTr = sc; }
+  }
+  for (const team of (d.boxscore || {}).players || []) for (const blocco of team.statistics || []) {
+    const labels = blocco.labels || blocco.names || [], idx = {};
+    labels.forEach((l, i) => { idx[String(l).toUpperCase()] = i; });
+    for (const a of blocco.athletes || []) {
+      const st = a.stats || [], pid = (a.athlete || {}).id ? String(a.athlete.id) : null; if (!pid || !st.length) continue;
+      const v = (k) => { const i = idx[k]; const x = i != null ? parseFloat(st[i]) : NaN; return Number.isFinite(x) ? x : null; };
+      out.box[pid] = { pts: v("PTS"), reb: v("REB"), ast: v("AST"), min: v("MIN") };
     }
   }
   return out;
