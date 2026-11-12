@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "36";
+const VERSIONE = "37";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
@@ -61,7 +61,7 @@ function barraMia() {
   const el = document.getElementById("miabar"); if (!el) return;
   const L = miaLeggi(); if (!L.length || location.hash.startsWith("#/mia")) { el.style.display = "none"; return; }
   const q = L.reduce((a, l) => a / Math.max(0.05, l.prob), 1);
-  el.style.display = "flex"; el.innerHTML = `<a href="#/mia"><i class="ti ti-ticket"></i> La mia schedina · <b>${L.length}</b> ${L.length === 1 ? "giocata" : "giocate"} · quota giusta ${q.toFixed(2)} <i class="ti ti-chevron-right"></i></a>`;
+  el.style.display = "flex"; el.innerHTML = `<a href="#/mia" aria-label="La mia schedina: ${L.length} giocate, quota giusta ${q.toFixed(2)}"><i class="ti ti-ticket"></i><b>${L.length}</b></a>`;
 }
 document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-add]"); if (!b) return;
@@ -138,6 +138,13 @@ function schedaPartita(D, p, topPick, cliccabile) {
   let chips = `<span class="chip">Totale ${r.totale.toFixed(0)}</span>`;
   if (topPick) chips += `<span class="chip" style="color:${GR}">${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
+  if (cliccabile) {
+    const riga = (ab, ruolo, stima, win, lato) => `<div class="tm cr">${logo(ab, 38)}<div class="cn"><div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo} · ${stima.toFixed(0)} stimati</div></div><div class="cv">${p.stato === "pre" ? `<span class="w">${pct(win)}</span>` : `<span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="${lato}">${(lato === "t" ? p.ptTr : p.ptCasa) ?? 0}</span>`}</div></div>`;
+    return `<a class="card gm cmp${p.stato === "in" ? " inlive" : ""}" href="#/partita/${p.id}" data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
+  <div class="riga" style="margin-bottom:6px"><span class="pill" data-pill style="color:${col}">${chip}</span><span class="s">Studia <i class="ti ti-chevron-right"></i></span></div>
+  ${riga(p.trasf, "trasferta", r.ptTr, 1 - r.pw, "t")}${riga(p.casa, "casa", r.ptCasa, r.pw, "c")}${p.stato !== "pre" ? `<div data-qt>${tabQuarti(p, D)}</div>` : ""}
+  <div class="bar" style="margin:8px 0"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>${chips}</a>`;
+  }
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
   return `<${tag} class="card gm${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
   <div class="riga" style="margin-bottom:10px"><span class="pill" data-pill style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>
@@ -548,7 +555,6 @@ async function vistaCombo(force) {
   const gruppi = SC.map(([t, ic, tipi]) => [t, ic, D.picks.filter((x) => tipi.includes(x.tipo))]);
   const scelte = gruppi.map((g) => g[2][0]).filter(Boolean);
   let h = topBar(D) + giorniChips();
-  if (scelte.length) { const c = scelte.reduce((a, x) => a * x.prob, 1); h += `<div class="card riga" style="gap:14px;justify-content:flex-start">${anello(c * 100, OR, 76)}<div><div class="s">I primi di ogni riquadro, insieme</div><div style="font-weight:600;font-size:15px">Meglio non esagerare</div><div class="s">Stima con eventi indipendenti: più giocate unisci, meno è probabile.</div></div></div>`; }
   h += riquadriConsigli(D);
   h += `<div class="cap">Per ogni giocata l'app trova la soglia che si supera con probabilità di almeno il 70% secondo il modello. Le percentuali sono stime, non certezze.</div>`;
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita per questo giorno.</div>`;
