@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "32";
+const VERSIONE = "33";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
@@ -199,7 +199,7 @@ async function vistaPartite(force) {
 // accesso rapido ai consigli divisi per tipo, con il numero di giocate
 function riquadriConsigli(D) {
   const P = applicaImp(D).picks || []; if (!P.length) return "";
-  return `<div class="riga" style="margin:14px 0 8px"><h2 style="margin:0">Consigli per tipo</h2><a class="s" href="#/combo" style="color:var(--or)">Tutti <i class="ti ti-chevron-right"></i></a></div><div class="grid2">` + SC.map(([t, ic, tipi], i) => {
+  return `<div class="sub" style="margin-top:6px">Scegli un tipo di giocata</div><div class="grid2">` + SC.map(([t, ic, tipi], i) => {
     const l = P.filter((x) => tipi.includes(x.tipo)); if (!l.length) return "";
     return `<a class="card" href="#/categoria/${i}" style="padding:12px;display:block"><div class="s"><i class="ti ${ic}" style="color:var(--or)"></i> ${esc(t)}</div><div style="font-size:22px;font-weight:700;margin-top:2px">${l.length}</div><div class="s">migliore ${pct(l[0].prob)}</div></a>`;
   }).join("") + `</div>`;
@@ -210,7 +210,6 @@ function disegnaPartite(D, conPoll, daCache) {
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
   h += avvisiDati(D, daCache);
   h += hero(D);
-  h += riquadriConsigli(D);
   { const m = confrontoMercato(D); if (m) h += `<details class="dt"><summary>Confronto con i bookmaker</summary>${m}</details>`; }
   if (D.partite.length) h += `<h2>Tutte le partite</h2>`;
   h += D.partite.map((p) => schedaPartita(D, p, top(p.id), true)).join("");
@@ -444,6 +443,7 @@ async function vistaCombo(force) {
   const scelte = gruppi.map((g) => g[2][0]).filter(Boolean);
   let h = topBar(D) + giorniChips();
   if (scelte.length) { const c = scelte.reduce((a, x) => a * x.prob, 1); h += `<div class="card riga" style="gap:14px;justify-content:flex-start">${anello(c * 100, OR, 76)}<div><div class="s">I primi di ogni riquadro, insieme</div><div style="font-weight:600;font-size:15px">Meglio non esagerare</div><div class="s">Stima con eventi indipendenti: più giocate unisci, meno è probabile.</div></div></div>`; }
+  h += riquadriConsigli(D);
   h += `<div class="cap">Per ogni giocata l'app trova la soglia che si supera con probabilità di almeno il 70% secondo il modello. Le percentuali sono stime, non certezze.</div>`;
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita per questo giorno.</div>`;
   const ess = ls.get("ess", false);
@@ -768,7 +768,7 @@ let timer = null;
 function route(force) {
   clearTimeout(timer);
   const hsh = location.hash.replace(/^#/, "") || "/";
-  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") ? "partite" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") || hsh.startsWith("/impostazioni") ? "storico" : "partite";
+  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") || hsh.startsWith("/categoria") ? "consigli" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") || hsh.startsWith("/impostazioni") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const cat = /^\/categoria\/(\d+)/.exec(hsh), m = /^\/partita\/(\d+)/.exec(hsh), gp = /^\/giocatore\/(\d+)/.exec(hsh);
   if (hsh.startsWith("/impostazioni")) vistaImpostazioni();
