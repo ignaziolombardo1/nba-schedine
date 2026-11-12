@@ -197,3 +197,6 @@ select.linea{width:100%;appearance:none;-webkit-appearance:none;background-image
 .hero{padding:10px 14px;margin:2px 0 8px;gap:12px}.hn{font-size:44px}.hero .ht{font-size:16px}
 .cl .tn{font-size:14px}.cl{gap:6px}.cl .tl{width:30px;height:30px}
 .cm{gap:6px}.cm .big{font-size:27px}.cm .w{font-size:20px}
+
+details.pan{margin-top:4px}details.pan>summary{list-style:none;cursor:pointer;font-size:12px;color:var(--or);padding:6px 0}details.pan>summary::-webkit-details-marker{display:none}
+.grid2 .regform{grid-column:1/-1}.grid2 .regbtn{margin:0!important}

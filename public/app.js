@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "38";
+const VERSIONE = "39";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
@@ -516,17 +516,17 @@ const TONI = { ok: [GR, "ti-shield-check"], mid: [OR, "ti-scale"], alta: [RD, "t
 function testoSchedina(s) { return `${s.nome} (${s.legs.length} giocate, probabilità unita ${pct(s.prob)})\n` + s.legs.map((l) => `• ${l.testo} (${l.partita}) ${pct(l.prob)}`).join("\n"); }
 function cardSchedina(s) {
   const [col, ic] = TONI[s.tono] || [OR, "ti-ticket"];
-  return `<div class="card sch" style="border-top:3px solid ${col}"><div class="riga" style="align-items:flex-start"><div><div class="sn"><i class="ti ${ic}" style="color:${col}"></i> ${esc(s.nome)}</div><div class="s">${esc(s.sotto)}</div></div><div style="text-align:right"><div class="sp" style="color:${col}">${pct(s.prob)}</div><div class="s">tutte centrate</div></div></div>
-  <div style="margin:10px 0 4px">${s.legs.map((l) => `<div class="leg">${l.pid ? foto(l.pid, 32) : l.squadra ? logo(l.squadra, 28) : `<span class="ph" style="width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-chart-bar" style="color:${OR}"></i></span>`}<div style="min-width:0;flex:1"><div style="font-weight:600">${esc(l.testo)}</div><div class="s">${esc(l.partita)} · ${esc(l.ora)}</div></div><b style="color:${colProb(l.prob)}">${pct(l.prob)}</b></div>`).join("")}</div>
-  <div class="s" style="line-height:1.5">Quota giusta per questa probabilità: <b style="color:#f2f2f2">${s.quotaEqua.toFixed(2)}</b>. Ha senso solo se il tuo bookmaker ne offre di più.${s.stessaPartita ? ` <span style="color:${AM}">Alcune giocate sono della stessa partita, quindi la probabilità reale è diversa.</span>` : ""}</div>
-  <button class="btn cp" data-cp="${esc(testoSchedina(s))}" style="margin:10px 0 0"><i class="ti ti-copy"></i> Copia la schedina</button>${btnRegistro({ id: s.chiave, chiave: s.chiave, nome: s.nome, testo: s.legs.map((l) => l.testo).join(" + "), prob: s.prob })}</div>`;
+  return `<div class="card sch" style="border-top:3px solid ${col};padding:12px 14px"><div class="riga" style="align-items:center"><div><div class="sn"><i class="ti ${ic}" style="color:${col}"></i> ${esc(s.nome)}</div><div class="s">${esc(s.sotto)}</div></div><div style="text-align:right"><div class="sp" style="color:${col}">${pct(s.prob)}</div><div class="s">quota ${s.quotaEqua.toFixed(2)}</div></div></div>
+  <div style="margin:8px 0 4px">${s.legs.map((l) => `<div class="leg" style="gap:8px;padding:4px 0">${l.pid ? foto(l.pid, 26) : l.squadra ? logo(l.squadra, 24) : `<span class="ph" style="width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-chart-bar" style="color:${OR}"></i></span>`}<div style="min-width:0;flex:1"><div style="font-weight:600;font-size:13.5px">${esc(l.testo)}</div><div class="s" style="font-size:11px">${esc(l.partita)} · ${esc(String(l.ora).slice(-5))}</div></div><b style="color:${colProb(l.prob)}">${pct(l.prob)}</b></div>`).join("")}</div>
+  ${s.stessaPartita ? `<div class="s" style="color:${AM};margin-bottom:6px">Più giocate della stessa partita: la probabilità reale è diversa.</div>` : ""}
+  <div class="grid2" style="gap:8px"><button class="btn cp" data-cp="${esc(testoSchedina(s))}" style="margin:0"><i class="ti ti-copy"></i> Copia</button>${btnRegistro({ id: s.chiave, chiave: s.chiave, nome: s.nome, testo: s.legs.map((l) => l.testo).join(" + "), prob: s.prob })}</div></div>`;
 }
 async function vistaSchedine(force) {
   APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
   let D; try { D = await dati(force); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
   let h = topBar(D) + giorniChips();
   const sc = D.schedine || [];
-  h += `<div class="cap" style="margin-top:0">Proposte costruite dall'app con le giocate più probabili del giorno. Le schedine a quota 2, 5, 10 e 20 possono avere due giocate della stessa partita. Sono stime del modello: nessuna schedina è sicura.</div>`;
+  h += `<div class="cap" style="margin-top:0">Quota = quota giusta calcolata dalle probabilità: il tuo bookmaker ne paga un po' meno. Stime del modello, nessuna schedina è sicura.</div>`;
   if (!sc.length) h += `<div class="vuoto">Per questo giorno non ci sono abbastanza partite da giocare o giocate sopra la soglia. Le proposte compaiono prima dell'inizio delle partite.</div>`;
   h += sc.map(cardSchedina).join("");
   const singola = D.picks.find((x) => D.partite.find((p) => p.id === x.g && p.stato === "pre"));
@@ -715,13 +715,13 @@ function ultimeHtml(D, sig, ul) {
 // ---------- LIVE
 function schedaLive(D, p) {
   const t = T(D, p.casa), v = T(D, p.trasf), cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#5a6378" : v.c;
-  const tm = (ab, ruolo) => `<div class="tm">${logo(ab, 54)}<div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div></div>`;
-  return `<div class="card gm inlive" data-lg="${p.id}" style="--ca:${ct};--cb:${cc}"><div class="riga" style="margin-bottom:10px"><span class="pill" style="color:${OR}"><span class="dot"></span>Live · ${esc(p.dettaglio)}</span><span class="s">Giocata al ${Math.round(p.f * 100)}%</span></div>
-  <div class="mu">${tm(p.trasf, "trasferta")}<div class="mid"><div class="sc"><span class="big liveN">${p.ptTr}</span><i>-</i><span class="big liveN">${p.ptCasa}</span></div></div>${tm(p.casa, "casa")}</div>
-  ${tabQuarti(p, D)}<div class="bar" style="height:4px"><div style="width:${(p.f * 100).toFixed(0)}%;background:${OR}"></div></div>
-  <div class="s" style="margin:10px 0 0">Probabilità di vittoria in questo momento</div><div class="bar"><div style="width:${((1 - p.pwLive) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
-  <div class="riga s" style="margin:4px 0 8px"><span>${esc(p.trasf)} ${pct(1 - p.pwLive)}</span><span>${esc(p.casa)} ${pct(p.pwLive)}</span></div>
-  <span class="chip">Totale ora ${p.ptCasa + p.ptTr}</span><span class="chip">Finale stimato ${p.proiTot.toFixed(0)}</span><span class="chip">Prima della gara ${p.r.totale.toFixed(0)}</span>${p.mercato ? `<span class="chip" style="color:${AM}">Bookmaker ${p.mercato.linea}: over ${pct(p.mercato.pMk)} (${p.mercato.minuti} min fa)</span><span class="chip" style="color:${colProb(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}">Nostra stima: ${p.mercato.pNostra >= 0.5 ? "over" : "under"} ${pct(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}</span>` : ""}</div>`;
+  const lato = (ab, r) => `<div class="tm cr"><div class="cl ${r}">${logo(ab, 34)}<div class="tn">${esc(T(D, ab).b.length > 7 ? ab : T(D, ab).b)}</div></div></div>`;
+  return `<div class="card gm cmp inlive" data-lg="${p.id}" style="--ca:${ct};--cb:${cc}"><div class="riga" style="margin-bottom:4px"><span class="pill" style="color:${OR}"><span class="dot"></span>Live · ${esc(p.dettaglio)}</span><span class="s">Giocata al ${Math.round(p.f * 100)}%</span></div>
+  <div class="cg">${lato(p.trasf, "tr")}<div class="cm"><span class="big liveN">${p.ptTr}</span><i>-</i><span class="big liveN">${p.ptCasa}</span></div>${lato(p.casa, "ca")}</div>
+  <div class="qr">${(p.qTr || []).map((q, i) => `<span class="${p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${q}-${(p.qCasa || [])[i] ?? 0}</span>`).join("")}</div>
+  <div class="bar" style="margin:6px 0 2px"><div style="width:${((1 - p.pwLive) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
+  <div class="riga s" style="margin:0 0 6px"><span>${esc(p.trasf)} ${pct(1 - p.pwLive)}</span><span>vittoria adesso</span><span>${esc(p.casa)} ${pct(p.pwLive)}</span></div>
+  <span class="chip">Totale ora ${p.ptCasa + p.ptTr}</span><span class="chip">Finale stimato ${p.proiTot.toFixed(0)}</span>${p.mercato ? `<span class="chip" style="color:${AM}">Bookmaker ${p.mercato.linea}: over ${pct(p.mercato.pMk)} (${p.mercato.minuti} min fa)</span><span class="chip" style="color:${colProb(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}">Nostra stima: ${p.mercato.pNostra >= 0.5 ? "over" : "under"} ${pct(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}</span>` : ""}</div>`;
 }
 function rigaSegnale(x) {
   const vis = x.pid ? foto(x.pid, 34) : `<span class="ph" style="width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-bolt" style="color:${OR}"></i></span>`;
@@ -770,7 +770,7 @@ function formazioniLive(D, p) {
       return `<tr class="${hot ? "hot" : ""}"><td class="nm"><div class="nmi">${g.pid ? foto(g.pid, 22) : ""}<span>${esc(br)}${g.pts === top && top > 0 ? ' <i class="ti ti-flame" style="color:' + OR + '"></i>' : ""}</span></div></td><td class="pt">${g.pts ?? 0}</td><td>${g.reb ?? 0}</td><td>${g.ast ?? 0}</td><td>${g.tre ?? "–"}</td><td>${g.stl ?? 0}</td><td>${g.blk ?? 0}</td><td class="${(g.pf ?? 0) >= 4 ? "fl" : ""}">${g.pf ?? 0}</td><td class="mn">${Math.round(g.min ?? 0)}</td></tr>`; };
     const tit = l.filter((g) => g.tit), pan = l.filter((g) => !g.tit).sort((a, b) => (b.min || 0) - (a.min || 0));
     const hd = `<tr class="th"><th></th><th>PT</th><th>RB</th><th>AS</th><th>3P</th><th>PR</th><th>ST</th><th>FL</th><th>MIN</th></tr>`;
-    return `<div class="card fz"><div class="lg" style="margin-bottom:4px">${logo(sq, 24)}<b>${esc(T(D, sq).n)}</b><span class="s" style="margin-left:auto">${sq === p.casa ? "casa" : "trasferta"}</span></div><table class="bx">${hd}${tit.length ? `<tr class="sec"><td colspan="9">Quintetto base</td></tr>` + tit.map(rg).join("") : ""}${pan.length ? `<tr class="sec"><td colspan="9">Panchina</td></tr>` + pan.map(rg).join("") : ""}</table></div>`;
+    return `<div class="card fz"><div class="lg" style="margin-bottom:4px">${logo(sq, 24)}<b>${esc(T(D, sq).n)}</b><span class="s" style="margin-left:auto">${sq === p.casa ? "casa" : "trasferta"}</span></div><table class="bx">${hd}${(tit.length ? tit : pan.slice(0, 5)).map(rg).join("")}</table>${(tit.length ? pan : pan.slice(5)).length ? `<details class="pan"><summary>Panchina (${(tit.length ? pan : pan.slice(5)).length})</summary><table class="bx">${hd}${(tit.length ? pan : pan.slice(5)).map(rg).join("")}</table></details>` : ""}</div>`;
   };
   return `<div class="sub">Formazioni e statistiche</div>` + tab(p.trasf) + tab(p.casa) + `<div class="cap" style="margin-top:0">PT punti · RB rimbalzi · AS assist · 3P triple (segnate-tentate) · PR palle rubate · ST stoppate · FL falli (rosso da 4) · MIN minuti. In arancione chi ha 20+ punti o una doppia doppia.</div>`;
 }
