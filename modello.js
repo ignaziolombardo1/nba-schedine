@@ -96,6 +96,7 @@ export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}, form
     .sort((a, b) => b.pts.v - a.pts.v);
 }
 
+const mezzo = (v) => { let l = Math.floor(v) + 0.5; if (Math.abs(l + 1 - v) < Math.abs(l - v)) l += 1; return l; };
 export function consigli(partite) {
   // partite: [{id, casa, trasf, r, giocatori}] -> lista di giocate ordinate per probabilità
   const out = [];
@@ -109,13 +110,13 @@ export function consigli(partite) {
       const buoni = Array.from({ length: 26 }, (_, i) => 84.5 + 2 * i).filter((x) => 1 - phi((x - pt) / STD.Squadra) >= PROB_MIN);
       if (buoni.length) { const x = Math.max(...buoni), pr = 1 - phi((x - pt) / STD.Squadra);
         out.push({ ...base, id: `sq_${g.id}_${sq}`, tipo: "Squadra", squadra: sq, testo: `${nome(sq, true)} over ${x} punti`, stima: pt.toFixed(1), prob: pr,
-          motivo: `Stima ${pt.toFixed(1)} punti per ${nome(sq, true)}: la probabilità di superare ${x} è circa ${Math.round(pr * 100)}%.` }); }
+          motivo: `Stima ${pt.toFixed(1)} punti per ${nome(sq, true)}: la probabilità di superare ${x} è circa ${Math.round(pr * 100)}%. Il bookmaker di solito parte da circa ${mezzo(pt)} (qui ${Math.round((1 - phi((mezzo(pt) - pt) / STD.Squadra)) * 100)}%): ${x} è una linea più bassa, più sicura ma pagata meno.` }); }
     }
     const scal = Array.from({ length: 36 }, (_, i) => 190.5 + 2 * i);
     const ov = scal.filter((x) => 1 - phi((x - r.totale) / STD.Totale) >= PROB_MIN);
     if (ov.length) { const x = Math.max(...ov), pr = 1 - phi((x - r.totale) / STD.Totale);
       out.push({ ...base, id: `tov_${g.id}`, tipo: "Totale", squadra: null, testo: `Totale over ${x}`, stima: r.totale.toFixed(1), prob: pr,
-        motivo: `Stima ${r.totale.toFixed(1)} punti totali${r.mk && r.mk.tot ? ` (modello ${r.mk.totaleModello.toFixed(1)}, bookmaker linea ${r.mk.tot.linea})` : ""}: probabilità di superare ${x} circa ${Math.round(pr * 100)}%.` }); }
+        motivo: `Stima ${r.totale.toFixed(1)} punti totali${r.mk && r.mk.tot ? ` (modello ${r.mk.totaleModello.toFixed(1)}, bookmaker linea ${r.mk.tot.linea})` : ""}: probabilità di superare ${x} circa ${Math.round(pr * 100)}%. Linea tipica del bookmaker: ${r.mk && r.mk.tot ? r.mk.tot.linea : mezzo(r.totale)} (over ${Math.round((1 - phi(((r.mk && r.mk.tot ? r.mk.tot.linea : mezzo(r.totale)) - r.totale) / STD.Totale)) * 100)}% per noi).` }); }
     const un = scal.filter((x) => phi((x - r.totale) / STD.Totale) >= PROB_MIN);
     if (un.length) { const x = Math.min(...un), pr = phi((x - r.totale) / STD.Totale);
       out.push({ ...base, id: `tun_${g.id}`, tipo: "Totale", squadra: null, testo: `Totale under ${x}`, stima: r.totale.toFixed(1), prob: pr,
