@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "37";
+const VERSIONE = "38";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
@@ -139,11 +139,15 @@ function schedaPartita(D, p, topPick, cliccabile) {
   if (topPick) chips += `<span class="chip" style="color:${GR}">${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
   if (cliccabile) {
-    const riga = (ab, ruolo, stima, win, lato) => `<div class="tm cr">${logo(ab, 38)}<div class="cn"><div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo} · ${stima.toFixed(0)} stimati</div></div><div class="cv">${p.stato === "pre" ? `<span class="w">${pct(win)}</span>` : `<span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="${lato}">${(lato === "t" ? p.ptTr : p.ptCasa) ?? 0}</span>`}</div></div>`;
+    const lato = (ab, ruolo) => `<div class="cl ${ruolo}">${logo(ab, 34)}<div class="tn">${esc(T(D, ab).b.length > 7 ? ab : T(D, ab).b)}</div></div>`;
+    const mezzo = p.stato === "pre"
+      ? `<div class="cm"><span class="w">${pct(1 - r.pw)}</span><i>-</i><span class="w">${pct(r.pw)}</span></div>`
+      : `<div class="cm"><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="t">${p.ptTr ?? 0}</span><i>-</i><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="c">${p.ptCasa ?? 0}</span></div>`;
+    const q = (p.qTr || []).length ? `<div class="qr" data-qt>${(p.qTr || []).map((v, i) => `<span class="${p.stato === "in" && p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${v}-${(p.qCasa || [])[i] ?? 0}</span>`).join("")}</div>` : "";
     return `<a class="card gm cmp${p.stato === "in" ? " inlive" : ""}" href="#/partita/${p.id}" data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
-  <div class="riga" style="margin-bottom:6px"><span class="pill" data-pill style="color:${col}">${chip}</span><span class="s">Studia <i class="ti ti-chevron-right"></i></span></div>
-  ${riga(p.trasf, "trasferta", r.ptTr, 1 - r.pw, "t")}${riga(p.casa, "casa", r.ptCasa, r.pw, "c")}${p.stato !== "pre" ? `<div data-qt>${tabQuarti(p, D)}</div>` : ""}
-  <div class="bar" style="margin:8px 0"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>${chips}</a>`;
+  <div class="riga" style="margin-bottom:4px"><span class="pill" data-pill style="color:${col}">${chip}</span><span class="s">${p.stato === "pre" ? `stimati ${r.ptTr.toFixed(0)}-${r.ptCasa.toFixed(0)}` : "Studia"} <i class="ti ti-chevron-right"></i></span></div>
+  <div class="cg"><div class="tm cr">${lato(p.trasf, "tr")}</div>${mezzo}<div class="tm cr">${lato(p.casa, "ca")}</div></div>${q}
+  <div class="bar" style="margin:6px 0 6px"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>${chips}</a>`;
   }
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
   return `<${tag} class="card gm${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
@@ -209,7 +213,7 @@ function seguiPunteggi(D) {
         if (k && String(k.textContent) !== String(x.ptCasa)) { k.textContent = x.ptCasa; k.classList.remove("flash"); void k.offsetWidth; k.classList.add("flash"); }
         if (pl) pl.innerHTML = `<span class="dot"></span>Live · ${esc(x.dettaglio)}`;
         illumina(c, x.id, x.ptTr, x.ptCasa);
-        const qe = c.querySelector("[data-qt]"); if (qe) qe.innerHTML = tabQuarti(x, D);
+        const qe = c.querySelector("[data-qt]"); if (qe) qe.innerHTML = qe.classList.contains("qr") ? (x.qTr || []).map((v, i) => `<span class="${x.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${v}-${(x.qCasa || [])[i] ?? 0}</span>`).join("") : tabQuarti(x, D);
       }
       for (const p of D.partite) if (p.stato === "in" && !vive.has(p.id)) cambio = true;
       if (cambio) return route(true);
