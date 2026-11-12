@@ -45,7 +45,7 @@ h2{font-size:16px;font-weight:600;margin:22px 0 8px}
 .tabs{display:flex;gap:6px;margin:4px 0 10px}.tabs button{flex:1}
 .pl{padding:12px 14px}
 .lad{margin-top:8px}.lad span{display:inline-block;padding:4px 9px;border-radius:999px;font-size:11px;background:var(--chip);margin:0 5px 6px 0}
-input.linea{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:14px;font-family:inherit;margin-top:8px}
+input.linea,select.linea{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:14px;font-family:inherit;margin-top:8px}
 .gauge{position:relative;height:10px;background:#2a2f3a;border-radius:5px;margin:16px 0 6px}
 .gauge .m{position:absolute;top:-1px;width:12px;height:12px;border-radius:50%;background:var(--or);margin-left:-6px}
 .gauge .l{position:absolute;top:-4px;width:2px;height:18px;background:#f2f2f2}
@@ -166,3 +166,9 @@ details.dt[open]>summary::after{content:"–"}
 details.dt[open]>summary{margin-bottom:8px}
 
 nav a{font-size:10.5px}nav a i{font-size:21px}
+
+.addl{flex-shrink:0;width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,138,42,.55);background:transparent;color:var(--or);font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;margin-left:6px}
+.addl.on{background:var(--or);color:#1a1206;font-weight:700}
+#miabar{position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:30;justify-content:center}
+#miabar a{display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:999px;background:linear-gradient(180deg,#2c2418,#241d14);color:var(--or);border:1px solid rgba(255,138,42,.5);font-size:13px;box-shadow:0 6px 22px rgba(0,0,0,.5)}
+select.linea{width:100%;appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--mut) 50%),linear-gradient(135deg,var(--mut) 50%,transparent 50%);background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;background-size:5px 5px;background-repeat:no-repeat;padding-right:30px}

@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "34";
+const VERSIONE = "35";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
@@ -48,10 +48,33 @@ function anello(p, col, size = 52) {
   return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="#232836" stroke-width="6"/><circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${col}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(L * p / 100).toFixed(1)} ${L.toFixed(1)}" transform="rotate(-90 ${c} ${c})"/><text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" fill="#f2f2f2" font-size="${size > 60 ? 18 : 13}" font-weight="600">${Math.round(p)}%</text></svg>`;
 }
 const colProb = (p) => (p >= 0.85 ? "#3ddc84" : p >= 0.78 ? "#9be564" : p >= 0.72 ? "#ffc24a" : OR);
-function cardPick(x) { return `<div class="card cardp"><div style="min-width:0"><div class="s">${esc(x.partita)} · ${esc(x.tipo)}</div><div style="font-weight:500">${esc(x.testo)}${x.dubbio ? ` <span class="s" style="color:${AM}">· in dubbio ${Math.round(x.dubbio * 100)}%</span>` : ""}</div></div><div><div class="v" style="color:${colProb(x.prob)}">${pct(x.prob)}</div><div class="e">stima ${esc(x.stima)}</div></div></div>`; }
+// ---------- LA MIA SCHEDINA: si compone con i consigli dell'app o con giocate scritte a mano
+const PM = new Map(); // consigli visibili -> giocata
+const miaLeggi = () => ls.get("mia", []);
+function legDa(x) {
+  const m = /(over|under) ([\d.]+)/.exec(x.testo || "");
+  const k = x.tipo === "Punti" ? "pts" : x.tipo === "Rimbalzi" ? "reb" : x.tipo === "Assist" ? "ast" : x.tipo === "Totale" ? "tot" : x.tipo === "Squadra" ? "sq" : "win";
+  return { id: x.id, chiave: chiaveGiocata(x), testo: x.testo, prob: x.prob, partita: x.partita, g: x.g, pid: x.pid || null, sq: x.squadra || null, k, dir: m ? m[1] : "over", soglia: m ? +m[2] : null, nome: k === "pts" || k === "reb" || k === "ast" ? String(x.testo).split(/ (over|under) /)[0] : null };
+}
+function addBtn(x) { PM.set(x.id, legDa(x)); const on = miaLeggi().some((l) => l.id === x.id); return `<button class="addl${on ? " on" : ""}" data-add="${esc(x.id)}" aria-label="Aggiungi alla mia schedina">${on ? "✓" : "+"}</button>`; }
+function barraMia() {
+  const el = document.getElementById("miabar"); if (!el) return;
+  const L = miaLeggi(); if (!L.length || location.hash.startsWith("#/mia")) { el.style.display = "none"; return; }
+  const q = L.reduce((a, l) => a / Math.max(0.05, l.prob), 1);
+  el.style.display = "flex"; el.innerHTML = `<a href="#/mia"><i class="ti ti-ticket"></i> La mia schedina · <b>${L.length}</b> ${L.length === 1 ? "giocata" : "giocate"} · quota giusta ${q.toFixed(2)} <i class="ti ti-chevron-right"></i></a>`;
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-add]"); if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const l = PM.get(b.dataset.add); if (!l) return;
+  let L = miaLeggi(); const i = L.findIndex((x) => x.id === l.id);
+  if (i >= 0) L.splice(i, 1); else L.push(l);
+  ls.set("mia", L); b.classList.toggle("on", i < 0); b.textContent = i < 0 ? "✓" : "+"; barraMia();
+}, true);
+function cardPick(x) { return `<div class="card cardp"><div style="min-width:0"><div class="s">${esc(x.partita)} · ${esc(x.tipo)}</div><div style="font-weight:500">${esc(x.testo)}${x.dubbio ? ` <span class="s" style="color:${AM}">· in dubbio ${Math.round(x.dubbio * 100)}%</span>` : ""}</div></div><div><div class="v" style="color:${colProb(x.prob)}">${pct(x.prob)}</div><div class="e">stima ${esc(x.stima)}</div></div>${addBtn(x)}</div>`; }
 function rigaPick(D, x) {
   const vis = x.pid ? foto(x.pid, 34) : x.squadra ? logo(x.squadra, 30) : `<span class="ph" style="width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center"><i class="ti ti-chart-bar" style="color:${OR}"></i></span>`;
-  return `<div class="pick">${anello(x.prob * 100, colProb(x.prob), 48)}${vis}<div style="min-width:0"><div class="t">${esc(x.testo)}</div><div class="s">${esc(x.partita)}${x.dubbio ? ` · <span style="color:${AM}">in dubbio (gioca col ${Math.round(x.dubbio * 100)}%)</span>` : ""}</div></div></div>`;
+  return `<div class="pick">${anello(x.prob * 100, colProb(x.prob), 48)}${vis}<div style="min-width:0"><div class="t">${esc(x.testo)}</div><div class="s">${esc(x.partita)}${x.dubbio ? ` · <span style="color:${AM}">in dubbio (gioca col ${Math.round(x.dubbio * 100)}%)</span>` : ""}</div></div>${addBtn(x)}</div>`;
 }
 function topBar(D) {
   const ora = D && D.aggiornato ? new Date(D.aggiornato).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
@@ -341,7 +364,11 @@ async function vistaRegistro() {
   if (reg.some((r) => r.esito == null)) {
     try {
       const S = await api("/api/storico", 0), m = new Map([...(S.schedine || []), ...(S.righe || [])].map((r) => [r.chiave, r.esito]));
-      reg = reg.map((r) => { const e = m.get(r.chiave); return r.esito == null && (e === 0 || e === 1) ? { ...r, esito: e } : r; }); ls.set("registro", reg);
+      reg = reg.map((r) => {
+        if (r.esito != null) return r;
+        if (r.legs && r.legs.length && r.legs.every((l) => l.chiave)) { const es = r.legs.map((l) => m.get(l.chiave)); if (es.some((e) => e === 0)) return { ...r, esito: 0 }; if (es.every((e) => e === 1)) return { ...r, esito: 1 }; return r; }
+        const e = m.get(r.chiave); return (e === 0 || e === 1) ? { ...r, esito: e } : r; });
+      ls.set("registro", reg);
     } catch {}
   }
   const per = ls.get("regPer", 0), dal = per ? new Date(Date.now() - per * 86400000).toISOString().slice(0, 10) : "";
@@ -392,6 +419,71 @@ async function vistaGiocatore(pid) {
   }
   h += `<a class="btn" style="display:block;text-align:center" href="#/partita/${p.id}">Apri la partita</a>`;
   APP.innerHTML = h;
+}
+
+
+// probabilità di una giocata scritta a mano, dal modello (stima e variabilità dei giocatori, totale e squadre)
+function probCustom(g, c) {
+  const over = (v, sd, t) => 1 - phi((t - v) / sd);
+  let v, sd, nome = "", pid = null, sq = null, k = c.k;
+  if (k === "tot") { v = g.r.totale; sd = 17; nome = "Totale"; }
+  else if (k === "sq") { v = c.sq === g.casa ? g.r.ptCasa : g.r.ptTr; sd = 12; sq = c.sq; nome = T(window.__D, c.sq).b; }
+  else { const pl = g.giocatori.find((x) => x.pid === c.pid); if (!pl) return null; const o = pl[k]; v = o.v; sd = o.sd; nome = pl.nome; pid = pl.pid; sq = pl.sq; if (pl.inf === "dubbio") c.pg = (pl[k].pg ?? 0.5); }
+  let p = over(v, sd, c.soglia); if (c.dir === "under") p = 1 - p; p *= c.pg || 1;
+  const u = k === "pts" ? "pt" : k === "reb" ? "rimb." : k === "ast" ? "ass." : "punti";
+  const testo = k === "tot" ? `Totale ${c.dir} ${c.soglia}` : k === "sq" ? `${nome} ${c.dir} ${c.soglia} punti` : `${nome} ${c.dir} ${c.soglia} ${u}`;
+  return { id: "mio_" + Date.now() + Math.random().toString(36).slice(2, 6), chiave: null, testo, prob: p, partita: `${g.trasf} @ ${g.casa}`, g: g.id, pid, sq, k, dir: c.dir, soglia: c.soglia, nome: k === "tot" || k === "sq" ? null : nome, mia: true, stima: v };
+}
+async function vistaMia() {
+  const back = `<a class="back" href="#/combo"><i class="ti ti-chevron-left"></i>Consigli</a>`;
+  barraMia();
+  let D = null; try { D = await dati(false); window.__D = D; } catch {}
+  const L = miaLeggi(), C = ls.get("miaForm", { g: "", k: "pts", pid: "", sq: "", dir: "over", soglia: "" });
+  const q = L.reduce((a, l) => a / Math.max(0.05, l.prob), 1), p = L.reduce((a, l) => a * l.prob, 1);
+  let h = back + `<h2>La mia schedina</h2>`;
+  if (!L.length) h += `<div class="vuoto">Vuota. Tocca il «+» su una giocata nei Consigli, oppure scrivine una tua qui sotto.</div>`;
+  else {
+    h += L.map((l, i) => `<div class="card cardp"><div style="min-width:0"><div class="s">${esc(l.partita)}${l.mia ? " · scelta da te" : ""}</div><div style="font-weight:500">${esc(l.testo)}</div></div><div style="text-align:right"><div class="v" style="color:${colProb(l.prob)}">${pct(l.prob)}</div><button class="chipbtn" data-rm="${i}" style="padding:2px 9px;font-size:11px">Togli</button></div></div>`).join("");
+    const stessa = new Set(L.map((l) => l.g)).size < L.length;
+    h += `<div class="card"><div class="row3"><div class="tile"><b>${(p * 100).toFixed(0)}%</b><span>tutte centrate</span></div><div class="tile"><b>${q.toFixed(2)}</b><span>quota giusta</span></div><div class="tile"><b>${L.length}</b><span>giocate</span></div></div>${stessa ? `<div class="cap" style="margin:8px 0 0;color:${AM}">Ci sono più giocate della stessa partita: la probabilità reale è diversa da quella calcolata.</div>` : ""}
+    <div class="grid2" style="margin-top:10px"><input class="linea" inputmode="decimal" placeholder="Quota offerta (es. 4.50)" id="miaq" style="margin:0"><input class="linea" inputmode="decimal" placeholder="Puntata €" id="miap" value="${impo().puntata}" style="margin:0"></div><div id="miaval"></div>
+    <button class="btn" id="miaok" style="margin:6px 0 0"><i class="ti ti-notebook"></i> Salva nel registro e segui in diretta</button><button class="btn" id="miacp" style="margin:8px 0 0"><i class="ti ti-copy"></i> Copia</button><button class="btn" id="miasvuota" style="margin:8px 0 0">Svuota</button></div>`;
+  }
+  // giocata scritta a mano
+  const gare = D ? D.partite.filter((x) => x.stato === "pre") : [];
+  h += `<div class="sub">Aggiungi una giocata tua</div>`;
+  if (!gare.length) h += `<div class="cap" style="margin-top:0">Non ci sono partite da giocare per il giorno selezionato: scegli un altro giorno dalla pagina Consigli.</div>`;
+  else {
+    const g = gare.find((x) => x.id === C.g) || gare[0], pl = g.giocatori.slice().sort((a, b) => b.pts.v - a.pts.v);
+    const sel = (id, opts, val) => `<select class="linea" id="${id}" style="margin:0">${opts.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(val) ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+    h += `<div class="card">${sel("cg", gare.map((x) => [x.id, `${x.trasf} @ ${x.casa} · ${String(x.ora).slice(-5)}`]), g.id)}
+    <div class="grid2" style="margin-top:8px">${sel("ck", [["pts", "Punti giocatore"], ["reb", "Rimbalzi giocatore"], ["ast", "Assist giocatore"], ["tot", "Totale partita"], ["sq", "Punti di una squadra"]], C.k)}${sel("cd", [["over", "Over"], ["under", "Under"]], C.dir)}</div>
+    ${["pts", "reb", "ast"].includes(C.k) ? `<div style="margin-top:8px">${sel("cp", pl.map((x) => [x.pid, `${x.nome} (${x.sq})`]), C.pid || (pl[0] && pl[0].pid))}</div>` : C.k === "sq" ? `<div style="margin-top:8px">${sel("cs", [[g.trasf, g.trasf], [g.casa, g.casa]], C.sq || g.trasf)}</div>` : ""}
+    <input class="linea" inputmode="decimal" id="cl" placeholder="Linea del tuo bookmaker (es. 19.5)" value="${esc(C.soglia)}" style="margin:8px 0 0"><div id="cprob"></div><button class="btn" id="cadd" style="margin:8px 0 0">Aggiungi alla schedina</button></div>`;
+    var gSel = g;
+  }
+  APP.innerHTML = h;
+  APP.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { const l = miaLeggi(); l.splice(+b.dataset.rm, 1); ls.set("mia", l); vistaMia(); });
+  const sv = $("#miasvuota"); if (sv) sv.onclick = () => { ls.set("mia", []); vistaMia(); };
+  const cp = $("#miacp"); if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(testoSchedina({ nome: "La mia schedina", legs: L, prob: p })); cp.textContent = "Copiata ✓"; } catch { cp.textContent = "Copia non riuscita"; } };
+  const mq = $("#miaq"); if (mq) {
+    mq.oninput = () => { const v = parseFloat(String(mq.value).replace(",", ".")); $("#miaval").innerHTML = v > 1 ? rigaValore(valoreGiocata(p, v)) : ""; };
+    $("#miaok").onclick = () => {
+      const qq = parseFloat(String(mq.value).replace(",", ".")), pu = parseFloat(String($("#miap").value).replace(",", "."));
+      if (!(qq > 1) || !(pu > 0)) { $("#miaok").textContent = "Inserisci quota (maggiore di 1) e puntata"; return; }
+      const r = ls.get("registro", []); r.unshift({ id: "mia|" + Date.now(), chiave: null, nome: `La mia schedina (${L.length})`, testo: L.map((l) => l.testo).join(" + "), tipo: "Schedina", prob: p, quota: qq, puntata: pu, data: new Date().toISOString().slice(0, 10), esito: null, legs: L });
+      ls.set("registro", r); ls.set("mia", []); location.hash = "#/live";
+    };
+  }
+  if (gSel) {
+    const leggi = () => ({ g: $("#cg").value, k: $("#ck").value, dir: $("#cd").value, pid: $("#cp") ? $("#cp").value : "", sq: $("#cs") ? $("#cs").value : "", soglia: parseFloat(String($("#cl").value).replace(",", ".")) });
+    const salvaC = () => { const c = leggi(); ls.set("miaForm", { ...c, soglia: $("#cl").value }); return c; };
+    const mostra = () => { const c = salvaC(), g = gare.find((x) => x.id === c.g); if (!g || !(c.soglia > 0)) { $("#cprob").innerHTML = ""; return null; } const r = probCustom(g, c); if (!r) { $("#cprob").innerHTML = ""; return null; } $("#cprob").innerHTML = `<div class="s" style="margin-top:8px">Per il modello: <b style="color:${colProb(r.prob)}">${pct(r.prob)}</b> · stima ${r.stima.toFixed(1)}</div>`; return r; };
+    for (const id of ["cg", "ck"]) $("#" + id).onchange = () => { salvaC(); vistaMia(); };
+    for (const id of ["cd", "cp", "cs"]) if ($("#" + id)) $("#" + id).onchange = () => { salvaC(); mostra(); };
+    $("#cl").oninput = mostra; mostra();
+    $("#cadd").onclick = () => { const r = mostra(); if (!r) { $("#cadd").textContent = "Scrivi la linea del bookmaker"; return; } const l = miaLeggi(); l.push(r); ls.set("mia", l); vistaMia(); };
+  }
 }
 
 // ---------- SCHEDINE
@@ -658,6 +750,30 @@ function formazioniLive(D, p) {
   };
   return `<div class="sub">Formazioni e statistiche</div>` + tab(p.trasf) + tab(p.casa) + `<div class="cap" style="margin-top:0">PT punti · RB rimbalzi · AS assist · 3P triple (segnate-tentate) · PR palle rubate · ST stoppate · FL falli (rosso da 4) · MIN minuti. In arancione chi ha 20+ punti o una doppia doppia.</div>`;
 }
+
+// stato di una giocata della mia schedina rispetto alla partita in corso
+function avanzamentoLeg(l, D) {
+  const p = D.partite.find((x) => x.id === l.g);
+  if (!p) return D.prossime.some((x) => x.id === l.g) ? { st: "pre", testo: "non ancora iniziata" } : { st: "nd", testo: "partita non in corso" };
+  let cur = null;
+  if (l.k === "tot") cur = (p.ptTr || 0) + (p.ptCasa || 0);
+  else if (l.k === "sq") cur = l.sq === p.casa ? p.ptCasa : p.ptTr;
+  else if (l.k === "win") { const d = l.sq === p.casa ? (p.ptCasa || 0) - (p.ptTr || 0) : (p.ptTr || 0) - (p.ptCasa || 0); return { st: d > 0 ? "vant" : "svant", testo: `${d > 0 ? "in vantaggio di " : "sotto di "}${Math.abs(d)}`, cur: d, soglia: 0, p }; }
+  else { const g = p.giocatori.find((x) => (l.pid && x.pid === l.pid) || (l.nome && x.nome === l.nome)); if (!g) return { st: "nd", testo: "giocatore non ancora nel tabellino", p }; cur = g[l.k]; }
+  const over = l.dir !== "under", sg = l.soglia;
+  const st = over ? (cur > sg ? "ok" : "in") : (cur > sg ? "no" : "in");
+  return { st, cur, soglia: sg, testo: `${cur} / ${sg}`, p };
+}
+function mieGiocateLive(D) {
+  const R = ls.get("registro", []).filter((r) => r.esito == null && r.legs && r.legs.length);
+  if (!R.length) return "";
+  const col = { ok: GR, no: RD, in: OR, vant: GR, svant: AM, pre: MU, nd: MU };
+  return `<div class="sub"><i class="ti ti-ticket" style="color:${OR}"></i> Le mie giocate</div>` + R.map((r) => `<div class="card"><div class="riga"><b>${esc(r.nome)}</b><span class="s">quota ${r.quota} · ${r.puntata} €</span></div>` + r.legs.map((l) => {
+    const a = avanzamentoLeg(l, D), c = col[a.st] || MU, pr = a.soglia > 0 && a.cur != null ? Math.max(0, Math.min(100, (a.cur / a.soglia) * 100)) : 0;
+    const ic = a.st === "ok" ? "ti-circle-check-filled" : a.st === "no" ? "ti-circle-x-filled" : "ti-circle-dashed";
+    return `<div style="margin-top:10px"><div class="riga" style="gap:8px"><div style="min-width:0;flex:1"><i class="ti ${ic}" style="color:${c}"></i> ${esc(l.testo)}</div><b style="color:${c};white-space:nowrap">${esc(a.testo)}</b></div>${a.soglia > 0 ? `<div class="bar" style="height:4px;margin-top:4px"><div style="width:${pr}%;background:${c}"></div></div>` : ""}${a.p ? `<div class="s" style="margin-top:2px">${esc(a.p.dettaglio || "")}</div>` : ""}</div>`;
+  }).join("") + `</div>`).join("");
+}
 async function vistaLive(primo = true) {
   if (primo) APP.innerHTML = topBar() + skel();
   let D; try { D = await api("/api/live", 3000); } catch (e) { if (primo) APP.innerHTML = topBar() + errBox(e); timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000); return; }
@@ -668,6 +784,7 @@ async function vistaLive(primo = true) {
     h += `<div class="vuoto"><b>Nessuna partita in corso.</b><br>Oggi: ${D.totali} partite, ${D.finite} finite.</div>`;
     if (D.prossime.length) h += `<h2>Prossime partite</h2>` + D.prossime.map((q) => `<a class="card riga" href="#/partita/${q.id}"><div class="lg">${logo(q.trasf, 28)}<b>${esc(q.trasf)}</b><span class="s">@</span>${logo(q.casa, 28)}<b>${esc(q.casa)}</b></div><span class="s">${esc(q.ora)}</span></a>`).join("");
   }
+  h += mieGiocateLive(D);
   for (const p of D.partite) {
     h += schedaLive(D, p) + formazioniLive(D, p) + grafLive(p);
     if (p.segnali && p.segnali.length) h += `<div class="sub"><span class="pill" style="color:${OR}"><span class="dot"></span>Segnali live</span> <span class="s">nati durante la partita</span></div>` + p.segnali.map(rigaSegnale).join("");
@@ -766,9 +883,9 @@ async function vistaDiag() {
 // ---------- router
 let timer = null;
 function route(force) {
-  clearTimeout(timer);
+  clearTimeout(timer); barraMia();
   const hsh = location.hash.replace(/^#/, "") || "/";
-  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") || hsh.startsWith("/categoria") ? "consigli" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") || hsh.startsWith("/impostazioni") ? "storico" : "partite";
+  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") || hsh.startsWith("/categoria") || hsh.startsWith("/mia") ? "consigli" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") || hsh.startsWith("/impostazioni") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const cat = /^\/categoria\/(\d+)/.exec(hsh), m = /^\/partita\/(\d+)/.exec(hsh), gp = /^\/giocatore\/(\d+)/.exec(hsh);
   if (hsh.startsWith("/impostazioni")) vistaImpostazioni();
@@ -778,6 +895,7 @@ function route(force) {
   else if (m) vistaStudio(m[1], force === true);
   else if (attivo === "live") vistaLive(true);
   else if (attivo === "schedine") vistaSchedine(force === true);
+  else if (hsh.startsWith("/mia")) vistaMia();
   else if (cat) vistaCategoria(+cat[1]);
   else if (hsh.startsWith("/combo")) vistaCombo(force === true);
   else if (attivo === "esiti") vistaEsiti();
