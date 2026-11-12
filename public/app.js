@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "27";
+const VERSIONE = "28";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Squadre e totali", "ti-chart-bar", ["Vincente", "Squadra", "Totale"]], ["Punti", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]]];
@@ -538,6 +538,12 @@ function quoteGioc(o, c) {
   <div class="grid3"><div><b style="color:${colProb(m.pMk)}">${pct(m.pMk)}</b><span>mercato over</span></div><div><b>${pct(m.pMod)}</b><span>solo modello</span></div><div><b style="color:${colProb(m.pFin)}">${pct(m.pFin)}</b><span>insieme</span></div></div>
   <div class="s">Il modello da solo stimava ${o.vModello.toFixed(1)}, il mercato ${m.muMk.toFixed(1)}: stima finale ${o.v.toFixed(1)}. ${m.n} ${m.n === 1 ? "libro" : "libri"}${libri ? " · quote over/under: " + libri : ""}</div></div>`;
 }
+// la linea che di solito offre il bookmaker è vicina alla mediana (probabilità ~50%): le soglie sopra il 70% sono linee più basse, pagate meno
+function lineaTipica(o, c) {
+  let l = Math.floor(o.v) + 0.5; if (Math.abs(l + 1 - o.v) < Math.abs(l - o.v)) l += 1; // .5 più vicino alla stima
+  const po = 1 - phi((l - o.v) / o.sd);
+  return `<div class="s" style="margin-top:6px;line-height:1.45">Linea tipica del bookmaker: circa <b style="color:#f2f2f2">${l}</b> ${c.u} (qui over ${pct(po)}). ${o.rec != null && o.rec < l ? `La soglia consigliata ${o.rec} è più bassa: più sicura ma pagata meno, e molti book non la offrono.` : ""}</div>`;
+}
 function schedaGiocatore(D, gid, x, mer, c) {
   const o = x[c.k], dub = x.inf === "dubbio" ? `<span class="pill" style="color:${AM};margin-left:6px">Dubbio</span>` : "";
   const tile = (n, v, on) => `<div class="tile${on ? " on" : ""}"><b>${v.toFixed(1)}</b><span>${n}</span></div>`;
@@ -545,7 +551,7 @@ function schedaGiocatore(D, gid, x, mer, c) {
   const lad = o.lad.map(([t, pr]) => { const col = pr >= 0.7 ? GR : pr >= 0.5 ? AM : MU; return `<span style="color:${col};${t === o.rec ? "border:1px solid " + col : ""}">over ${t} · ${pct(pr)}</span>`; }).join("");
   const key = `${gid}_${x.pid || x.nome}_${mer}`;
   return `<div class="card pl"><div class="lg">${foto(x.pid, 48)}<div style="min-width:0"><div class="tn">${x.pid ? `<a href="#/giocatore/${esc(x.pid)}" style="border-bottom:1px dotted #5a6378">${esc(x.nome)}</a>` : esc(x.nome)}${dub}</div><div class="s">${esc(x.sq)} · ${Math.round(x.min)} min attesi</div>${x.assenze && x.boost && x.boost[c.k] >= 0.3 ? `<div class="s" style="color:${AM}">+${x.boost[c.k].toFixed(1)} ${c.u} per l'assenza di ${esc(x.assenze.join(", "))}</div>` : ""}</div></div>
-  <div class="row3">${tile("Punti", x.pts.v, mer === "Punti")}${tile("Rimbalzi", x.reb.v, mer === "Rimbalzi")}${tile("Assist", x.ast.v, mer === "Assist")}</div>${rec}${quoteGioc(o, c)}${formaHtml(x, mer, c, o)}
+  <div class="row3">${tile("Punti", x.pts.v, mer === "Punti")}${tile("Rimbalzi", x.reb.v, mer === "Rimbalzi")}${tile("Assist", x.ast.v, mer === "Assist")}</div>${rec}${lineaTipica(o, c)}${quoteGioc(o, c)}${formaHtml(x, mer, c, o)}
   <div class="s" style="margin-top:8px">ALTRE SOGLIE POSSIBILI</div><div class="lad">${lad}</div>
   <input class="linea" inputmode="decimal" placeholder="Tua linea ${mer.toLowerCase()} (es. ${(Math.round(o.v * 2) / 2)})" data-lk="${esc(key)}" data-v="${o.v}" data-sd="${o.sd}" value="${esc(ls.get("L_" + key, ""))}"><div class="s" data-lp="${esc(key)}"></div></div>`;
 }
