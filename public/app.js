@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "22";
+const VERSIONE = "23";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Squadre e totali", "ti-chart-bar", ["Vincente", "Squadra", "Totale"]], ["Punti", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]]];
@@ -301,9 +301,10 @@ function statisticheRegistro(chiuse) {
   const per = {}; for (const r of chiuse) { const c = (per[r.tipo || "Altro"] ||= { n: 0, ok: 0, pr: 0, pu: 0 }); c.n++; c.ok += r.esito; c.pu += r.puntata; c.pr += r.esito === 1 ? r.puntata * (r.quota - 1) : -r.puntata; }
   const nomi = { Totale: "Totale partita", Squadra: "Punti squadra", Vincente: "Vincente", Punti: "Punti giocatore", Rimbalzi: "Rimbalzi", Assist: "Assist", Schedina: "Schedine" };
   const qm = chiuse.reduce((a, r) => a + r.quota, 0) / chiuse.length, pm = chiuse.reduce((a, r) => a + (r.prob || 0), 0) / chiuse.length;
+  const cl = chiuse.filter((r) => r.chiusura > 1), clv = cl.length ? cl.reduce((a, r) => a + (r.quota / r.chiusura - 1), 0) / cl.length : null;
   return `<div class="card"><div class="riga"><div class="s">Bankroll (partendo da ${b0} €)</div><b style="color:${col}">${b.toFixed(2).replace(".", ",")} €</b></div>
   <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:90px;margin-top:6px"><path d="${d} L${W} ${H} L0 ${H} Z" fill="${col}" opacity=".12"/><path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/></svg>
-  <div class="row3" style="margin-top:8px"><div class="tile"><b style="color:${tipo === 1 ? GR : RD}">${serie}${tipo === 1 ? "V" : "P"}</b><span>serie in corso</span></div><div class="tile"><b>-${dd.toFixed(0)} €</b><span>calo massimo</span></div><div class="tile"><b>${qm.toFixed(2)}</b><span>quota media</span></div></div>
+  <div class="row3" style="margin-top:8px"><div class="tile"><b style="color:${tipo === 1 ? GR : RD}">${serie}${tipo === 1 ? "V" : "P"}</b><span>serie in corso</span></div><div class="tile"><b>-${dd.toFixed(0)} €</b><span>calo massimo</span></div><div class="tile">${clv != null ? `<b style="color:${clv >= 0 ? GR : RD}">${clv >= 0 ? "+" : ""}${(clv * 100).toFixed(1)}%</b><span>CLV medio (${cl.length})</span>` : `<b>${qm.toFixed(2)}</b><span>quota media</span>`}</div></div>
   <div class="s" style="margin-top:8px">Centrate ${(chiuse.filter((r) => r.esito === 1).length / chiuse.length * 100).toFixed(0)}% · previste in media ${(pm * 100).toFixed(0)}% · quota pareggio ${(1 / Math.max(0.01, chiuse.filter((r) => r.esito === 1).length / chiuse.length)).toFixed(2)}</div></div>
   <div class="sub">Rendimento per tipo di giocata</div>` + Object.entries(per).sort((x, y) => y[1].n - x[1].n).map(([t, c]) => `<div class="card riga" style="padding:9px 12px"><div><div style="font-weight:500">${esc(nomi[t] || t)}</div><div class="s">${c.ok}/${c.n} centrate · ${c.pu.toFixed(0)} € puntati</div></div><b style="color:${c.pr >= 0 ? GR : RD}">${eur(c.pr)} <span class="s">(${(c.pr / c.pu * 100).toFixed(0)}%)</span></b></div>`).join("");
 }
@@ -324,7 +325,7 @@ async function vistaRegistro() {
   else {
     h += `<div class="card riga" style="gap:14px;justify-content:flex-start"><div><div class="s">Risultato delle giocate chiuse</div><div style="font-family:'Barlow Condensed',Inter,sans-serif;font-size:36px;font-weight:700;color:${prof >= 0 ? GR : RD}">${chiuse.length ? eur(prof) : "–"}</div><div class="s">${vinte.length} centrate su ${chiuse.length}${puntato ? ` · rendimento ${(prof / puntato * 100).toFixed(0)}% su ${puntato.toFixed(2).replace(".", ",")} € puntati` : ""} · ${reg.length - chiuse.length} in attesa</div></div></div>`;
     h += statisticheRegistro(chiuse);
-    h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div><div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div></div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div></div>`).join("");
+    h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div><div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div></div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div><div class="riga" style="margin-top:8px;gap:8px;justify-content:flex-start"><span class="s">Quota di chiusura</span><input class="linea" inputmode="decimal" data-cl="${i}" value="${r.chiusura || ""}" placeholder="es. 1.75" style="margin:0;width:90px;padding:4px 8px">${r.chiusura > 1 ? (() => { const c = r.quota / r.chiusura - 1; return `<b style="color:${c >= 0 ? GR : RD}">CLV ${c >= 0 ? "+" : ""}${(c * 100).toFixed(1)}%</b>`; })() : ""}</div></div>`).join("");
   }
   if (reg.length) h += `<div class="grid2" style="margin-top:6px"><button class="btn" id="csv" style="margin:0">Scarica CSV</button><button class="btn" id="bak" style="margin:0">Copia backup</button></div>`;
   h += `<button class="btn" id="rip" style="margin:8px 0 0">Ripristina da backup incollato</button><div class="cap">Il registro vive solo su questo telefono: ogni tanto copia il backup e conservalo (ad esempio nelle note).</div>`;
@@ -336,6 +337,7 @@ async function vistaRegistro() {
   };
   const bak = $("#bak"); if (bak) bak.onclick = async () => { try { await navigator.clipboard.writeText(JSON.stringify(ls.get("registro", []))); bak.textContent = "Copiato ✓"; } catch { bak.textContent = "Copia non riuscita"; } };
   $("#rip").onclick = () => { const t = prompt("Incolla qui il backup copiato:"); if (!t) return; try { const a = JSON.parse(t); if (!Array.isArray(a)) throw 0; ls.set("registro", a); vistaRegistro(); } catch { alert("Backup non valido"); } };
+  APP.querySelectorAll("[data-cl]").forEach((el) => el.onchange = () => { const r = ls.get("registro", []), v = parseFloat(String(el.value).replace(",", ".")); r[+el.dataset.cl].chiusura = v > 1 ? v : null; ls.set("registro", r); vistaRegistro(); });
   APP.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => { const r = ls.get("registro", []); r.splice(+b.dataset.del, 1); ls.set("registro", r); vistaRegistro(); });
 }
 
