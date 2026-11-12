@@ -98,7 +98,10 @@ export async function aggiornaQuote(env, stato, partite, forza = false) {
   const key = env.ODDS_API_KEY; if (!key) return null;
   const adesso = Date.now(), regioni = env.ODDS_REGIONS || "us";
   const mercatiProps = (env.ODDS_PROPS || "player_points").split(",").map((x) => x.trim()).filter(Boolean);
-  const nuovo = { t: stato?.t || null, tProps: stato?.tProps || {}, giochi: stato?.giochi || {}, props: stato?.props || {}, crediti: stato?.crediti ?? null, errore: null, chiamate: 0 };
+  const oggi = new Date(adesso + 3600e3).toISOString().slice(0, 10), tetto = parseInt(env.ODDS_BUDGET_DAY) || 14; // crediti massimi al giorno: 14 x 30 giorni = 420 su 500
+  const speso0 = stato?.giornoSpeso === oggi ? stato.speso || 0 : 0;
+  const nreg = Math.max(1, regioni.split(",").length);
+  const nuovo = { giornoSpeso: oggi, speso: speso0, t: stato?.t || null, tProps: stato?.tProps || {}, giochi: stato?.giochi || {}, props: stato?.props || {}, crediti: stato?.crediti ?? null, errore: null, chiamate: 0 };
   const restanti = nuovo.crediti;
   if (restanti != null && restanti < 15) { nuovo.errore = "crediti quasi finiti: aggiornamento sospeso"; return nuovo; }
   const lenti = restanti != null && restanti < 100 ? 4 : restanti != null && restanti < 300 ? 2 : 1; // meno aggiornamenti quando i crediti calano
@@ -106,9 +109,11 @@ export async function aggiornaQuote(env, stato, partite, forza = false) {
   const prossime = partite.filter((p) => p.stato === "pre" && Date.parse(p.iso) - adesso < 14 * 3600e3);
   const inCorso = partite.filter((p) => p.stato === "in");
   const eta = nuovo.t ? (adesso - Date.parse(nuovo.t)) / MIN : 1e9;
-  const serve = forza ? eta > 10 : (inCorso.length ? eta >= 30 * lenti : prossime.length ? eta >= 120 * lenti : false);
+  const serve = forza ? eta > 10 : (inCorso.length ? eta >= 180 * lenti : prossime.length ? eta >= 240 * lenti : false);
+  const costoGiochi = 2 * nreg, costoProps = mercatiProps.length * nreg, puoSpendere = (c) => nuovo.speso + c <= tetto;
   try {
-    if (serve) {
+    if (serve && puoSpendere(costoGiochi)) {
+      nuovo.speso += costoGiochi;
       const r = await chiedi("/odds", { regions: regioni, markets: "totals,spreads", oddsFormat: "decimal" }, key);
       nuovo.giochi = leggiGiochi(r.json); nuovo.t = new Date().toISOString(); nuovo.crediti = r.restanti; nuovo.chiamate++;
     }
@@ -116,8 +121,10 @@ export async function aggiornaQuote(env, stato, partite, forza = false) {
     const daFare = prossime.filter((p) => Date.parse(p.iso) - adesso < 4 * 3600e3 && (!nuovo.tProps[chiaveGara(p.casa, p.trasf)] || adesso - Date.parse(nuovo.tProps[chiaveGara(p.casa, p.trasf)]) > 3 * 3600e3 * lenti));
     if (mercatiProps.length && daFare.length && (nuovo.crediti == null || nuovo.crediti > 40)) {
       for (const p of daFare.slice(0, 4)) {
+        if (!puoSpendere(costoProps)) { nuovo.errore = "tetto giornaliero di crediti raggiunto"; break; }
         const g = nuovo.giochi[chiaveGara(p.casa, p.trasf)]; if (!g || !g.id) continue;
         try {
+          nuovo.speso += costoProps;
           const r = await chiedi(`/events/${g.id}/odds`, { regions: regioni, markets: mercatiProps.join(","), oddsFormat: "decimal" }, key);
           nuovo.props[chiaveGara(p.casa, p.trasf)] = leggiProps(r.json); nuovo.tProps[chiaveGara(p.casa, p.trasf)] = new Date().toISOString(); nuovo.crediti = r.restanti ?? nuovo.crediti; nuovo.chiamate++;
         } catch (e) { nuovo.errore = e.message; }
