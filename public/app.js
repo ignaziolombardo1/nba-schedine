@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "39";
+const VERSIONE = "40";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
@@ -59,9 +59,9 @@ function legDa(x) {
 function addBtn(x) { PM.set(x.id, legDa(x)); const on = miaLeggi().some((l) => l.id === x.id); return `<button class="addl${on ? " on" : ""}" data-add="${esc(x.id)}" aria-label="Aggiungi alla mia schedina">${on ? "✓" : "+"}</button>`; }
 function barraMia() {
   const el = document.getElementById("miabar"); if (!el) return;
-  const L = miaLeggi(); if (!L.length || location.hash.startsWith("#/mia")) { el.style.display = "none"; return; }
+  const L = miaLeggi(); if (location.hash.startsWith("#/mia")) { el.style.display = "none"; return; }
   const q = L.reduce((a, l) => a / Math.max(0.05, l.prob), 1);
-  el.style.display = "flex"; el.innerHTML = `<a href="#/mia" aria-label="La mia schedina: ${L.length} giocate, quota giusta ${q.toFixed(2)}"><i class="ti ti-ticket"></i><b>${L.length}</b></a>`;
+  el.style.display = "flex"; el.innerHTML = L.length ? `<a href="#/mia" aria-label="La mia schedina: ${L.length} giocate, quota giusta ${q.toFixed(2)}"><i class="ti ti-ticket"></i><b>${L.length}</b></a>` : `<a href="#/mia" class="vuota" aria-label="Componi la tua schedina"><i class="ti ti-ticket"></i><b>Schedina</b></a>`;
 }
 document.addEventListener("click", (e) => {
   const b = e.target.closest("[data-add]"); if (!b) return;
@@ -69,7 +69,7 @@ document.addEventListener("click", (e) => {
   const l = PM.get(b.dataset.add); if (!l) return;
   let L = miaLeggi(); const i = L.findIndex((x) => x.id === l.id);
   if (i >= 0) L.splice(i, 1); else L.push(l);
-  ls.set("mia", L); b.classList.toggle("on", i < 0); b.textContent = i < 0 ? "✓" : "+"; barraMia();
+  ls.set("mia", L); b.classList.toggle("on", i < 0); b.textContent = i < 0 ? "✓" : "+"; barraMia(); if (location.hash.startsWith("#/mia") && window.__miaAgg) window.__miaAgg();
 }, true);
 function cardPick(x) { return `<div class="card cardp"><div style="min-width:0"><div class="s">${esc(x.partita)} · ${esc(x.tipo)}</div><div style="font-weight:500">${esc(x.testo)}${x.dubbio ? ` <span class="s" style="color:${AM}">· in dubbio ${Math.round(x.dubbio * 100)}%</span>` : ""}</div></div><div><div class="v" style="color:${colProb(x.prob)}">${pct(x.prob)}</div><div class="e">stima ${esc(x.stima)}</div></div>${addBtn(x)}</div>`; }
 function rigaPick(D, x) {
@@ -462,53 +462,74 @@ function probCustom(g, c) {
 async function vistaMia() {
   const back = `<a class="back" href="#/combo"><i class="ti ti-chevron-left"></i>Consigli</a>`;
   barraMia();
+  APP.innerHTML = back + `<h2>La mia schedina</h2>` + skel();
   let D = null; try { D = await dati(false); window.__D = D; } catch {}
-  const L = miaLeggi(), C = ls.get("miaForm", { g: "", k: "pts", pid: "", sq: "", dir: "over", soglia: "" });
-  const q = L.reduce((a, l) => a / Math.max(0.05, l.prob), 1), p = L.reduce((a, l) => a * l.prob, 1);
-  let h = back + `<h2>La mia schedina</h2>`;
-  if (!L.length) h += `<div class="vuoto">Vuota. Tocca il «+» su una giocata nei Consigli, oppure scrivine una tua qui sotto.</div>`;
-  else {
-    h += L.map((l, i) => `<div class="card cardp"><div style="min-width:0"><div class="s">${esc(l.partita)}${l.mia ? " · scelta da te" : ""}</div><div style="font-weight:500">${esc(l.testo)}</div></div><div style="text-align:right"><div class="v" style="color:${colProb(l.prob)}">${pct(l.prob)}</div><button class="chipbtn" data-rm="${i}" style="padding:2px 9px;font-size:11px">Togli</button></div></div>`).join("");
-    const stessa = new Set(L.map((l) => l.g)).size < L.length;
-    h += `<div class="card"><div class="row3"><div class="tile"><b>${(p * 100).toFixed(0)}%</b><span>tutte centrate</span></div><div class="tile"><b>${q.toFixed(2)}</b><span>quota giusta</span></div><div class="tile"><b>${L.length}</b><span>giocate</span></div></div>${stessa ? `<div class="cap" style="margin:8px 0 0;color:${AM}">Ci sono più giocate della stessa partita: la probabilità reale è diversa da quella calcolata.</div>` : ""}
-    <div class="grid2" style="margin-top:10px"><input class="linea" inputmode="decimal" placeholder="Quota offerta (es. 4.50)" id="miaq" style="margin:0"><input class="linea" inputmode="decimal" placeholder="Puntata €" id="miap" value="${impo().puntata}" style="margin:0"></div><div id="miaval"></div>
-    <button class="btn" id="miaok" style="margin:6px 0 0"><i class="ti ti-notebook"></i> Salva nel registro e segui in diretta</button><button class="btn" id="miacp" style="margin:8px 0 0"><i class="ti ti-copy"></i> Copia</button><button class="btn" id="miasvuota" style="margin:8px 0 0">Svuota</button></div>`;
-  }
-  // giocata scritta a mano
   const gare = D ? D.partite.filter((x) => x.stato === "pre") : [];
-  h += `<div class="sub">Aggiungi una giocata tua</div>`;
-  if (!gare.length) h += `<div class="cap" style="margin-top:0">Non ci sono partite da giocare per il giorno selezionato: scegli un altro giorno dalla pagina Consigli.</div>`;
-  else {
-    const g = gare.find((x) => x.id === C.g) || gare[0], pl = g.giocatori.slice().sort((a, b) => b.pts.v - a.pts.v);
-    const sel = (id, opts, val) => `<select class="linea" id="${id}" style="margin:0">${opts.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(val) ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
-    h += `<div class="card">${sel("cg", gare.map((x) => [x.id, `${x.trasf} @ ${x.casa} · ${String(x.ora).slice(-5)}`]), g.id)}
-    <div class="grid2" style="margin-top:8px">${sel("ck", [["pts", "Punti giocatore"], ["reb", "Rimbalzi giocatore"], ["ast", "Assist giocatore"], ["tot", "Totale partita"], ["sq", "Punti di una squadra"]], C.k)}${sel("cd", [["over", "Over"], ["under", "Under"]], C.dir)}</div>
-    ${["pts", "reb", "ast"].includes(C.k) ? `<div style="margin-top:8px">${sel("cp", pl.map((x) => [x.pid, `${x.nome} (${x.sq})`]), C.pid || (pl[0] && pl[0].pid))}</div>` : C.k === "sq" ? `<div style="margin-top:8px">${sel("cs", [[g.trasf, g.trasf], [g.casa, g.casa]], C.sq || g.trasf)}</div>` : ""}
-    <input class="linea" inputmode="decimal" id="cl" placeholder="Linea del tuo bookmaker (es. 19.5)" value="${esc(C.soglia)}" style="margin:8px 0 0"><div id="cprob"></div><button class="btn" id="cadd" style="margin:8px 0 0">Aggiungi alla schedina</button></div>`;
-    var gSel = g;
-  }
-  APP.innerHTML = h;
-  APP.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { const l = miaLeggi(); l.splice(+b.dataset.rm, 1); ls.set("mia", l); vistaMia(); });
-  const sv = $("#miasvuota"); if (sv) sv.onclick = () => { ls.set("mia", []); vistaMia(); };
-  const cp = $("#miacp"); if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(testoSchedina({ nome: "La mia schedina", legs: L, prob: p })); cp.textContent = "Copiata ✓"; } catch { cp.textContent = "Copia non riuscita"; } };
-  const mq = $("#miaq"); if (mq) {
+  const preIds = new Set(gare.map((x) => x.id));
+  APP.innerHTML = back + `<h2>La mia schedina</h2><div id="miaris"></div><div id="miacos"></div>`;
+  // --- riepilogo: giocate scelte, probabilità, quota e salvataggio
+  const riepilogo = () => {
+    const L = miaLeggi(), el = $("#miaris");
+    if (!L.length) {
+      const pronte = (D && D.schedine || []).filter((x) => /^q\d+$/.test(x.id));
+      el.innerHTML = `<div class="card"><div style="font-weight:600">Nessuna giocata scelta</div><div class="cap" style="margin:4px 0 8px">Parti da una schedina pronta oppure scegli tu le giocate qui sotto.</div>${pronte.length ? `<div class="grid2" style="gap:8px">${pronte.map((x) => `<button class="btn" data-pronta="${esc(x.id)}" style="margin:0">${esc(x.nome.replace("La bomba quota", "Quota"))}<br><span class="s">${pct(x.prob)} · ${x.legs.length} giocate</span></button>`).join("")}</div>` : ""}</div>`;
+      el.querySelectorAll("[data-pronta]").forEach((b) => b.onclick = () => {
+        const x = pronte.find((q) => q.id === b.dataset.pronta); if (!x) return;
+        ls.set("mia", x.legs.map((l) => ({ id: l.id || `${l.g}|${l.tipo}|${l.pid || l.squadra || l.testo}`, ...legDa({ ...l, id: l.id || `${l.g}|${l.tipo}|${l.pid || l.squadra || l.testo}` }) })));
+        barraMia(); riepilogo(); lista();
+      });
+      return;
+    }
+    const q = L.reduce((a, l) => a / Math.max(0.05, l.prob), 1), p = L.reduce((a, l) => a * l.prob, 1), stessa = new Set(L.map((l) => l.g)).size < L.length;
+    el.innerHTML = L.map((l, i) => `<div class="card cardp"><div style="min-width:0"><div class="s">${esc(l.partita)}${l.mia ? " · scelta da te" : ""}</div><div style="font-weight:500">${esc(l.testo)}</div></div><div style="text-align:right"><div class="v" style="color:${colProb(l.prob)}">${pct(l.prob)}</div><button class="chipbtn" data-rm="${i}" style="padding:2px 9px;font-size:11px">Togli</button></div></div>`).join("") +
+    `<div class="card"><div class="row3"><div class="tile"><b>${(p * 100).toFixed(0)}%</b><span>tutte centrate</span></div><div class="tile"><b>${q.toFixed(2)}</b><span>quota giusta</span></div><div class="tile"><b>${L.length}</b><span>giocate</span></div></div>${stessa ? `<div class="cap" style="margin:8px 0 0;color:${AM}">Ci sono più giocate della stessa partita: la probabilità reale è diversa da quella calcolata.</div>` : ""}
+    <div class="grid2" style="margin-top:10px"><input class="linea" inputmode="decimal" placeholder="Quota offerta (es. 4.50)" id="miaq" style="margin:0"><input class="linea" inputmode="decimal" placeholder="Puntata €" id="miap" value="${impo().puntata}" style="margin:0"></div><div id="miaval"></div>
+    <button class="btn" id="miaok" style="margin:6px 0 0"><i class="ti ti-notebook"></i> Salva e segui in diretta</button><div class="grid2" style="gap:8px;margin-top:8px"><button class="btn" id="miacp" style="margin:0"><i class="ti ti-copy"></i> Copia</button><button class="btn" id="miasvuota" style="margin:0">Svuota</button></div></div>`;
+    el.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { const l = miaLeggi(); l.splice(+b.dataset.rm, 1); ls.set("mia", l); barraMia(); riepilogo(); lista(); });
+    $("#miasvuota").onclick = () => { ls.set("mia", []); barraMia(); riepilogo(); lista(); };
+    $("#miacp").onclick = async () => { try { await navigator.clipboard.writeText(testoSchedina({ nome: "La mia schedina", legs: L, prob: p })); $("#miacp").textContent = "Copiata ✓"; } catch { $("#miacp").textContent = "Copia non riuscita"; } };
+    const mq = $("#miaq");
     mq.oninput = () => { const v = parseFloat(String(mq.value).replace(",", ".")); $("#miaval").innerHTML = v > 1 ? rigaValore(valoreGiocata(p, v)) : ""; };
     $("#miaok").onclick = () => {
       const qq = parseFloat(String(mq.value).replace(",", ".")), pu = parseFloat(String($("#miap").value).replace(",", "."));
-      if (!(qq > 1) || !(pu > 0)) { $("#miaok").textContent = "Inserisci quota (maggiore di 1) e puntata"; return; }
+      if (!(qq > 1) || !(pu > 0)) { $("#miaok").textContent = "Scrivi la quota (maggiore di 1) e la puntata"; return; }
       const r = ls.get("registro", []); r.unshift({ id: "mia|" + Date.now(), chiave: null, nome: `La mia schedina (${L.length})`, testo: L.map((l) => l.testo).join(" + "), tipo: "Schedina", prob: p, quota: qq, puntata: pu, data: new Date().toISOString().slice(0, 10), esito: null, legs: L });
-      ls.set("registro", r); ls.set("mia", []); location.hash = "#/live";
+      ls.set("registro", r); ls.set("mia", []); barraMia(); location.hash = "#/live";
     };
-  }
-  if (gSel) {
-    const leggi = () => ({ g: $("#cg").value, k: $("#ck").value, dir: $("#cd").value, pid: $("#cp") ? $("#cp").value : "", sq: $("#cs") ? $("#cs").value : "", soglia: parseFloat(String($("#cl").value).replace(",", ".")) });
-    const salvaC = () => { const c = leggi(); ls.set("miaForm", { ...c, soglia: $("#cl").value }); return c; };
-    const mostra = () => { const c = salvaC(), g = gare.find((x) => x.id === c.g); if (!g || !(c.soglia > 0)) { $("#cprob").innerHTML = ""; return null; } const r = probCustom(g, c); if (!r) { $("#cprob").innerHTML = ""; return null; } $("#cprob").innerHTML = `<div class="s" style="margin-top:8px">Per il modello: <b style="color:${colProb(r.prob)}">${pct(r.prob)}</b> · stima ${r.stima.toFixed(1)}</div>`; return r; };
-    for (const id of ["cg", "ck"]) $("#" + id).onchange = () => { salvaC(); vistaMia(); };
-    for (const id of ["cd", "cp", "cs"]) if ($("#" + id)) $("#" + id).onchange = () => { salvaC(); mostra(); };
-    $("#cl").oninput = mostra; mostra();
-    $("#cadd").onclick = () => { const r = mostra(); if (!r) { $("#cadd").textContent = "Scrivi la linea del bookmaker"; return; } const l = miaLeggi(); l.push(r); ls.set("mia", l); vistaMia(); };
-  }
+  };
+  // --- scelta delle giocate: dai consigli oppure scritte a mano
+  const lista = () => {
+    const tab = ls.get("miaTab", "c"), el = $("#miacos");
+    let h = `<div class="tabs" style="margin-top:14px"><button class="chipbtn${tab === "c" ? " on" : ""}" data-tab="c">Scegli dai consigli</button><button class="chipbtn${tab === "s" ? " on" : ""}" data-tab="s">Scrivi la tua</button></div>`;
+    if (!gare.length) h += `<div class="cap">Non ci sono partite da giocare per il giorno selezionato: cambia giorno dalla pagina Consigli.</div>`;
+    else if (tab === "c") {
+      const cat = Math.min(ls.get("miaCat", 0), SC.length - 1);
+      h += `<div class="tabs">${SC.map(([t], i) => `<button class="chipbtn${cat === i ? " on" : ""}" data-cat="${i}">${esc(t)}</button>`).join("")}</div>`;
+      const l = (D.picks || []).filter((x) => preIds.has(x.g) && SC[cat][2].includes(x.tipo)).slice(0, 25);
+      h += l.length ? l.map(cardPick).join("") : `<div class="vuoto">Nessuna giocata di questo tipo con probabilità sopra il 70%.</div>`;
+    } else {
+      const C = ls.get("miaForm", { g: "", k: "pts", pid: "", sq: "", dir: "over", soglia: "" }), g = gare.find((x) => x.id === C.g) || gare[0], pl = g.giocatori.slice().sort((a, b) => b.pts.v - a.pts.v);
+      const sel = (id, opts, val) => `<select class="linea" id="${id}" style="margin:0">${opts.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(val) ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+      h += `<div class="cap" style="margin-top:0">Scrivi la linea che vedi sul tuo bookmaker: l'app calcola la probabilità.</div><div class="card">${sel("cg", gare.map((x) => [x.id, `${x.trasf} @ ${x.casa} · ${String(x.ora).slice(-5)}`]), g.id)}
+      <div class="grid2" style="margin-top:8px">${sel("ck", [["pts", "Punti giocatore"], ["reb", "Rimbalzi giocatore"], ["ast", "Assist giocatore"], ["tot", "Totale partita"], ["sq", "Punti di una squadra"]], C.k)}${sel("cd", [["over", "Over"], ["under", "Under"]], C.dir)}</div>
+      ${["pts", "reb", "ast"].includes(C.k) ? `<div style="margin-top:8px">${sel("cp", pl.map((x) => [x.pid, `${x.nome} (${x.sq})`]), C.pid || (pl[0] && pl[0].pid))}</div>` : C.k === "sq" ? `<div style="margin-top:8px">${sel("cs", [[g.trasf, g.trasf], [g.casa, g.casa]], C.sq || g.trasf)}</div>` : ""}
+      <input class="linea" inputmode="decimal" id="cl" placeholder="Linea del bookmaker (es. 19.5)" value="${esc(C.soglia)}" style="margin:8px 0 0"><div id="cprob"></div><button class="btn" id="cadd" style="margin:8px 0 0">Aggiungi alla schedina</button></div>`;
+    }
+    el.innerHTML = h;
+    el.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => { ls.set("miaTab", b.dataset.tab); lista(); });
+    el.querySelectorAll("[data-cat]").forEach((b) => b.onclick = () => { ls.set("miaCat", +b.dataset.cat); lista(); });
+    if (tab === "s" && gare.length) {
+      const leggi = () => ({ g: $("#cg").value, k: $("#ck").value, dir: $("#cd").value, pid: $("#cp") ? $("#cp").value : "", sq: $("#cs") ? $("#cs").value : "", soglia: parseFloat(String($("#cl").value).replace(",", ".")) });
+      const salvaC = () => { const c = leggi(); ls.set("miaForm", { ...c, soglia: $("#cl").value }); return c; };
+      const mostra = () => { const c = salvaC(), g = gare.find((x) => x.id === c.g); if (!g || !(c.soglia > 0)) { $("#cprob").innerHTML = ""; return null; } const r = probCustom(g, c); if (!r) { $("#cprob").innerHTML = ""; return null; } $("#cprob").innerHTML = `<div class="s" style="margin-top:8px">Per il modello: <b style="color:${colProb(r.prob)}">${pct(r.prob)}</b> · stima ${r.stima.toFixed(1)}</div>`; return r; };
+      for (const id of ["cg", "ck"]) $("#" + id).onchange = () => { salvaC(); lista(); };
+      for (const id of ["cd", "cp", "cs"]) if ($("#" + id)) $("#" + id).onchange = () => { salvaC(); mostra(); };
+      $("#cl").oninput = mostra; mostra();
+      $("#cadd").onclick = () => { const r = mostra(); if (!r) { $("#cadd").textContent = "Scrivi la linea del bookmaker"; return; } const l = miaLeggi(); l.push(r); ls.set("mia", l); barraMia(); riepilogo(); $("#cl").value = ""; ls.set("miaForm", { ...leggi(), soglia: "" }); mostra(); };
+    }
+  };
+  window.__miaAgg = () => { riepilogo(); };
+  riepilogo(); lista();
 }
 
 // ---------- SCHEDINE
