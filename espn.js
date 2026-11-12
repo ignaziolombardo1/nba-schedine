@@ -105,7 +105,9 @@ export async function caricaInfortuni() {
   const d = await get(`${ESPN}/injuries`, {}, 600), out = {};
   for (const t of d.injuries || []) for (const i of t.injuries || []) {
     const n = (i.athlete || {}).displayName; const stato = String(i.status || "").toLowerCase();
-    if (n) out[n.trim().toLowerCase()] = { stato: stato.includes("out") ? "out" : "dubbio", dettaglio: i.shortComment || i.status || "" };
+    if (n) // probabilità che giochi: doubtful 25%, questionable 50%, day-to-day 60%, probable 85%
+    const grado = stato.includes("out") ? 0 : stato.includes("doubt") ? 0.25 : stato.includes("question") ? 0.5 : stato.includes("day") ? 0.6 : stato.includes("probable") ? 0.85 : 0.5;
+    out[n.trim().toLowerCase()] = { stato: stato.includes("out") ? "out" : "dubbio", grado, etichetta: i.status || "", dettaglio: i.shortComment || i.status || "" };
   }
   return out;
 }
