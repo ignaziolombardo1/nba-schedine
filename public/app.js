@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "41";
+const VERSIONE = "42";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -66,6 +66,11 @@ function barraMia() {
   el.style.display = "flex"; el.innerHTML = L.length ? `<a href="#/mia" aria-label="La mia schedina: ${L.length} giocate, quota giusta ${q.toFixed(2)}"><i class="ti ti-ticket"></i><b>${L.length}</b></a>` : `<a href="#/mia" class="vuota" aria-label="Componi la tua schedina"><i class="ti ti-ticket"></i><b>Schedina</b></a>`;
 }
 document.addEventListener("click", (e) => {
+  const d = e.target.closest("[data-delm]");
+  if (d) { // doppio tocco per confermare
+    if (d.dataset.sicuro) { ls.set("registro", ls.get("registro", []).filter((r) => r.id !== d.dataset.delm)); if (location.hash.startsWith("#/live")) { clearTimeout(timer); vistaLive(false); } return; }
+    d.dataset.sicuro = "1"; d.textContent = "Tocca ancora per togliere"; setTimeout(() => { if (d.isConnected) { delete d.dataset.sicuro; d.textContent = "Rimuovi"; } }, 3500); return;
+  }
   const b = e.target.closest("[data-add]"); if (!b) return;
   e.preventDefault(); e.stopPropagation();
   const l = PM.get(b.dataset.add); if (!l) return;
@@ -240,7 +245,10 @@ function riquadriConsigli(D) {
     return `<a class="card" href="#/categoria/${i}" style="padding:12px;display:block"><div class="s"><i class="ti ${ic}" style="color:var(--or)"></i> ${esc(t)}</div><div style="font-size:22px;font-weight:700;margin-top:2px">${l.length}</div><div class="s">migliore ${pct(l[0].prob)}</div></a>`;
   }).join("") + `</div>`;
 }
+let firmaHome = "";
+const firmaDati = (D) => D.partite.map((p) => p.id + p.stato + p.ptTr + p.ptCasa).join(",");
 function disegnaPartite(D, conPoll, daCache) {
+  firmaHome = firmaDati(D);
   const top = (id) => D.picks.find((x) => x.g === id);
   let h = topBar(D) + giorniChips();
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
@@ -815,31 +823,48 @@ function mieGiocateLive(D) {
   const R = ls.get("registro", []).filter((r) => r.esito == null && r.legs && r.legs.length);
   if (!R.length) return "";
   const col = { ok: GR, no: RD, in: OR, vant: GR, svant: AM, pre: MU, nd: MU };
-  return `<div class="sub"><i class="ti ti-ticket" style="color:${OR}"></i> Le mie giocate</div>` + R.map((r) => `<div class="card"><div class="riga"><b>${esc(r.nome)}</b><span class="s">quota ${r.quota} · ${r.puntata} €</span></div>` + r.legs.map((l) => {
+  return `<div class="sub"><i class="ti ti-ticket" style="color:${OR}"></i> Le mie giocate</div>` + R.map((r) => `<div class="card"><div class="riga"><b>${esc(r.nome)}</b><span class="s">quota ${r.quota} · ${r.puntata} € <button class="chipbtn" data-delm="${esc(r.id)}" style="padding:2px 9px;font-size:11px;margin-left:6px">Rimuovi</button></span></div>` + r.legs.map((l) => {
     const a = avanzamentoLeg(l, D), c = col[a.st] || MU, pr = a.soglia > 0 && a.cur != null ? Math.max(0, Math.min(100, (a.cur / a.soglia) * 100)) : 0;
     const ic = a.st === "ok" ? "ti-circle-check-filled" : a.st === "no" ? "ti-circle-x-filled" : "ti-circle-dashed";
     return `<div style="margin-top:10px"><div class="riga" style="gap:8px"><div style="min-width:0;flex:1"><i class="ti ${ic}" style="color:${c}"></i> ${esc(l.testo)}</div><b style="color:${c};white-space:nowrap">${esc(a.testo)}</b></div>${a.soglia > 0 ? `<div class="bar" style="height:4px;margin-top:4px"><div style="width:${pr}%;background:${c}"></div></div>` : ""}${a.p ? `<div class="s" style="margin-top:2px">${esc(a.p.dettaglio || "")}</div>` : ""}</div>`;
   }).join("") + `</div>`).join("");
 }
+const bloccoLive = {};
 async function vistaLive(primo = true) {
-  if (primo) APP.innerHTML = topBar() + skel();
+  if (primo) { APP.innerHTML = topBar() + skel(); delete APP.dataset.live; }
   let D; try { D = await api("/api/live", 3000); } catch (e) { if (primo) APP.innerHTML = topBar() + errBox(e); timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000); return; }
   if (!location.hash.startsWith("#/live")) return;
   aggiornaStoriaLive(D);
-  let h = topBar(D) + novitaLive() + `<div class="cap" style="margin-top:0">Si aggiorna da solo ogni 6 secondi (ESPN pubblica i dati ogni 10-20 secondi circa). Le probabilità tengono conto di punteggio, tempo rimasto e minuti giocati.</div>`;
+  const B = []; // blocchi con chiave: si riscrive solo quello che cambia, così la pagina non lampeggia
+  B.push(["top", topBar(D) + novitaLive() + `<div class="cap" style="margin-top:0">Si aggiorna da solo ogni 6 secondi (ESPN pubblica i dati ogni 10-20 secondi circa). Le probabilità tengono conto di punteggio, tempo rimasto e minuti giocati.</div>`]);
   if (!D.partite.length) {
-    h += `<div class="vuoto"><b>Nessuna partita in corso.</b><br>Oggi: ${D.totali} partite, ${D.finite} finite.</div>`;
+    let h = `<div class="vuoto"><b>Nessuna partita in corso.</b><br>Oggi: ${D.totali} partite, ${D.finite} finite.</div>`;
     if (D.prossime.length) h += `<h2>Prossime partite</h2>` + D.prossime.map((q) => `<a class="card riga" href="#/partita/${q.id}"><div class="lg">${logo(q.trasf, 28)}<b>${esc(q.trasf)}</b><span class="s">@</span>${logo(q.casa, 28)}<b>${esc(q.casa)}</b></div><span class="s">${esc(q.ora)}</span></a>`).join("");
+    B.push(["vuoto", h]);
   }
-  h += mieGiocateLive(D);
+  B.push(["mie", mieGiocateLive(D)]);
   for (const p of D.partite) {
-    h += schedaLive(D, p) + formazioniLive(D, p) + grafLive(p);
+    let h = schedaLive(D, p) + formazioniLive(D, p) + grafLive(p);
     if (p.segnali && p.segnali.length) h += `<div class="sub"><span class="pill" style="color:${OR}"><span class="dot"></span>Segnali live</span> <span class="s">nati durante la partita</span></div>` + p.segnali.map(rigaSegnale).join("");
     const picks = [...p.picks].sort((a, b) => (a.pLive >= 0.995) - (b.pLive >= 0.995) || b.pLive - a.pLive);
     if (picks.length) h += `<div class="sub">Le nostre giocate su questa partita</div>` + picks.map(rigaLive).join("");
     h += `<a class="btn" style="display:block;text-align:center" href="#/partita/${p.id}">Apri lo studio di questa partita</a>`;
+    B.push(["g" + p.id, h]);
   }
-  const y = window.scrollY; APP.innerHTML = h; window.scrollTo(0, y);
+  const chiavi = B.map((x) => x[0]).join("|"), y = window.scrollY;
+  if (!primo && APP.dataset.live === chiavi && APP.querySelector("[data-blk]")) {
+    for (const [k, h] of B) {
+      const el = APP.querySelector(`[data-blk="${k}"]`); if (!el || bloccoLive[k] === h) continue;
+      const aperti = [...el.querySelectorAll("details")].map((d) => d.open);
+      el.innerHTML = h; bloccoLive[k] = h;
+      el.querySelectorAll("details").forEach((d, i) => { if (aperti[i]) d.open = true; });
+    }
+  } else {
+    APP.innerHTML = B.map(([k, h]) => `<div data-blk="${k}">${h}</div>`).join(""); APP.dataset.live = chiavi;
+    for (const k of Object.keys(bloccoLive)) delete bloccoLive[k];
+    for (const [k, h] of B) bloccoLive[k] = h;
+  }
+  window.scrollTo(0, y);
   for (const p of D.partite) illumina(APP.querySelector(`[data-lg="${p.id}"]`), p.id, p.ptTr, p.ptCasa);
   timer = setTimeout(() => !document.hidden && location.hash.startsWith("#/live") && vistaLive(false), 6000);
 }
@@ -963,6 +988,7 @@ document.addEventListener("visibilitychange", async () => {
     try {
       const D = await dati(true);
       if ((location.hash.replace(/^#/, "") || "/") !== "/") return;
+      if (firmaDati(D) === firmaHome) return; // niente è cambiato: non ridisegnare
       clearTimeout(timer); const y = window.scrollY; disegnaPartite(D, true); window.scrollTo(0, y);
     } catch {}
   }
