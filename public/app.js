@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "30";
+const VERSIONE = "31";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
@@ -257,6 +257,10 @@ function vistaImpostazioni() {
   let h = back + `<h2>Impostazioni</h2><div class="cap" style="margin-top:0">Valgono solo su questo telefono. Cambiano le giocate che vedi nelle pagine Partite, Studio e Combo; le proposte di schedina usano soglie proprie.</div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Probabilità minima delle giocate</div><div class="tabs">${[0.70, 0.75, 0.80, 0.85].map((v) => `<button class="chipbtn${i.soglia === v ? " on" : ""}" data-sg="${v}">${Math.round(v * 100)}%</button>`).join("")}</div></div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Quali giocate vedere</div>${Object.keys(IMP0.mercati).map((m) => `<label class="sw"><input type="checkbox" data-mk="${m}" ${i.mercati[m] !== false ? "checked" : ""}> ${esc({ Vincente: "Squadra vincente", Squadra: "Punti di una squadra", Totale: "Totale della partita" }[m] || m)}</label>`).join("")}</div>`;
+  const pushOk = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  h += `<div class="card"><div class="sub" style="margin-top:0"><i class="ti ti-bell"></i> Notifiche sul telefono</div>` + (pushOk
+    ? `<div class="cap" style="margin:4px 0 8px">Ogni mattina il riepilogo con le migliori giocate e le schedine quota 2, 5, 10 e 20; a fine giornata i risultati.</div><div class="grid2"><button class="btn" id="pushOn" style="margin:0">Attiva</button><button class="btn" id="pushProva" style="margin:0">Invia prova</button></div><div class="cap" id="pushMsg" style="margin-bottom:0">${Notification.permission === "granted" ? "Permesso già concesso: tocca «Attiva» per collegare questo telefono." : Notification.permission === "denied" ? "Le notifiche sono bloccate nelle impostazioni del telefono per questa app." : ""}</div>`
+    : `<div class="cap" style="margin:4px 0 0">Per le notifiche su iPhone serve iOS 16.4 o più recente e l'app aperta dalla schermata Home: in Safari tocca Condividi → «Aggiungi alla schermata Home», poi apri l'app da lì e torna qui.</div>`) + `</div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Puntata predefinita nel registro (€)</div><input class="linea" inputmode="decimal" id="pun" value="${i.puntata}" style="margin-top:0"></div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Bankroll (€)</div><input class="linea" inputmode="decimal" id="bk" value="${i.bankroll}" style="margin-top:0"><div class="sub">Quanto del consiglio di Kelly seguire</div><div class="tabs">${[[0.1, "10%"], [0.25, "25%"], [0.5, "50%"]].map(([v, t]) => `<button class="chipbtn${i.kelly === v ? " on" : ""}" data-kl="${v}">${t}</button>`).join("")}</div><div class="cap">Il bankroll serve a calcolare la puntata consigliata e la curva nel registro. Meglio una frazione prudente di Kelly: 25% è lo standard dei tipster.</div></div>`;
   h += `<button class="btn" id="ripr">Ripristina le impostazioni iniziali</button>`;
@@ -265,6 +269,21 @@ function vistaImpostazioni() {
   APP.querySelectorAll("[data-sg]").forEach((b) => b.onclick = () => { salva({ soglia: +b.dataset.sg }); vistaImpostazioni(); });
   APP.querySelectorAll("[data-mk]").forEach((c) => c.onchange = () => { const mk = { ...impo().mercati, [c.dataset.mk]: c.checked }; salva({ mercati: mk }); });
   $("#pun").oninput = (e) => { const v = parseFloat(String(e.target.value).replace(",", ".")); if (v > 0) salva({ puntata: v }); };
+  if ($("#pushOn")) {
+    const msg = (t) => { $("#pushMsg").textContent = t; };
+    $("#pushOn").onclick = async () => {
+      try {
+        const perm = await Notification.requestPermission(); if (perm !== "granted") return msg("Permesso non concesso: abilita le notifiche per l'app nelle impostazioni del telefono.");
+        const reg = await navigator.serviceWorker.ready, k = (await (await fetch("/api/push-chiave")).json()).chiave;
+        if (!k) throw new Error("chiave non disponibile (serve Supabase)");
+        const raw = atob(k.replace(/-/g, "+").replace(/_/g, "/")), key = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+        const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+        const r = await fetch("/api/push-iscrivi", { method: "POST", body: JSON.stringify(sub.toJSON()) }); if (!r.ok) throw new Error("iscrizione non salvata");
+        msg("Fatto: questo telefono è collegato. Tocca «Invia prova».");
+      } catch (e) { msg("Non riuscito: " + (e.message || e)); }
+    };
+    $("#pushProva").onclick = async () => { try { const r = await (await fetch("/api/push-prova", { method: "POST" })).json(); msg(r.inviati ? "Prova inviata: dovrebbe arrivare tra pochi secondi." : "Nessun telefono collegato o invio rifiutato (" + JSON.stringify(r.esiti || []) + "): tocca prima «Attiva»."); } catch (e) { msg("Non riuscito: " + (e.message || e)); } };
+  }
   $("#bk").oninput = (e) => { const v = parseFloat(String(e.target.value).replace(",", ".")); if (v > 0) salva({ bankroll: v }); };
   APP.querySelectorAll("[data-kl]").forEach((b) => b.onclick = () => { salva({ kelly: +b.dataset.kl }); vistaImpostazioni(); });
   $("#ripr").onclick = () => { ls.set("imp", {}); vistaImpostazioni(); };

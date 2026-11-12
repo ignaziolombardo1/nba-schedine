@@ -144,6 +144,54 @@ async function salvaCalib(env, righe) {
   await db(env, "POST", { tabella: "nba_forma", params: { on_conflict: "pid" }, corpo: [{ pid: "_calib", nome: "calibrazione", sq: "", dati: c, agg: new Date().toISOString() }], prefer: "resolution=merge-duplicates" });
 }
 
+// ---- Notifiche sul telefono (Web Push, funzionano con l'app aggiunta alla schermata Home di iPhone con iOS 16.4 o più recente)
+// Le chiavi VAPID si creano da sole al primo uso e restano su Supabase (riga "_vapid"); gli iscritti stanno nella riga "_push".
+const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const daB64u = (t) => Uint8Array.from(atob(t.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+async function rigaForma(env, pid) { const r = await db(env, "GET", { tabella: "nba_forma", params: { select: "dati", pid: "eq." + pid } }); return r[0] ? r[0].dati : null; }
+async function salvaRigaForma(env, pid, dati) { await db(env, "POST", { tabella: "nba_forma", params: { on_conflict: "pid" }, corpo: [{ pid, nome: pid.replace("_", ""), sq: "", dati, agg: new Date().toISOString() }], prefer: "resolution=merge-duplicates" }); }
+async function chiaviVapid(env) {
+  let k = await rigaForma(env, "_vapid");
+  if (!k) {
+    const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    k = { pub: b64u(await crypto.subtle.exportKey("raw", kp.publicKey)), jwk: await crypto.subtle.exportKey("jwk", kp.privateKey) };
+    await salvaRigaForma(env, "_vapid", k);
+  }
+  return k;
+}
+async function inviaUnPush(env, sub, k) {
+  const aud = new URL(sub.endpoint).origin, exp = Math.floor(Date.now() / 1000) + 12 * 3600;
+  const te = new TextEncoder(), parte = (o) => b64u(te.encode(JSON.stringify(o)));
+  const dati = parte({ typ: "JWT", alg: "ES256" }) + "." + parte({ aud, exp, sub: env.APP_URL && /^https:/.test(env.APP_URL) ? env.APP_URL : "mailto:nba-schedine@example.com" });
+  const chiave = await crypto.subtle.importKey("jwk", k.jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const firma = b64u(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, chiave, te.encode(dati)));
+  const r = await fetch(sub.endpoint, { method: "POST", headers: { TTL: "43200", Urgency: "high", Authorization: `vapid t=${dati}.${firma}, k=${k.pub}` } });
+  return r.status;
+}
+// manda a tutti gli iscritti un avviso senza testo; il telefono scarica il testo da /api/ultimo-avviso e lo mostra
+async function pushATutti(env, titolo, testo, url = "/#/schedine") {
+  if (!dbOk(env)) return { inviati: 0 };
+  const elenco = (await rigaForma(env, "_push")) || { subs: [] };
+  if (!elenco.subs.length) return { inviati: 0 };
+  await salvaRigaForma(env, "_ultimoavviso", { titolo, testo, url, t: new Date().toISOString() });
+  const k = await chiaviVapid(env), buoni = [], esiti = [];
+  for (const sub of elenco.subs) { let st = 0; try { st = await inviaUnPush(env, sub, k); } catch { st = 0; } esiti.push(st); if (st !== 404 && st !== 410) buoni.push(sub); }
+  if (buoni.length !== elenco.subs.length) await salvaRigaForma(env, "_push", { subs: buoni });
+  return { inviati: esiti.filter((x) => x >= 200 && x < 300).length, esiti };
+}
+async function iscriviPush(env, sub) {
+  if (!sub || !/^https:\/\//.test(sub.endpoint || "")) throw new Error("iscrizione non valida");
+  const el = (await rigaForma(env, "_push")) || { subs: [] };
+  el.subs = el.subs.filter((x) => x.endpoint !== sub.endpoint).concat([{ endpoint: sub.endpoint }]).slice(-5);
+  await salvaRigaForma(env, "_push", el);
+}
+async function avvisa(env, titolo, testo, breve) {
+  const out = [];
+  if (env.TELEGRAM_TOKEN && env.TELEGRAM_CHAT_ID) { await telegram(env, testo); out.push("telegram"); }
+  try { const r = await pushATutti(env, titolo, breve || testo.slice(0, 160)); if (r.inviati) out.push("push"); } catch {}
+  return out;
+}
+
 // ---- Avvisi su Telegram (facoltativi: segreti TELEGRAM_TOKEN e TELEGRAM_CHAT_ID)
 async function telegram(env, testo) {
   const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendMessage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text: testo.slice(0, 4000), disable_web_page_preview: true }) });
@@ -151,8 +199,9 @@ async function telegram(env, testo) {
 }
 const pc = (x) => Math.round(x * 100) + "%";
 async function cronAvvisi(env) {
-  if (!env.TELEGRAM_TOKEN || !env.TELEGRAM_CHAT_ID) return { saltato: "mancano TELEGRAM_TOKEN e TELEGRAM_CHAT_ID" };
   if (!dbOk(env)) return { saltato: "serve Supabase" };
+  const conTelegram = env.TELEGRAM_TOKEN && env.TELEGRAM_CHAT_ID, conPush = ((await rigaForma(env, "_push").catch(() => null)) || { subs: [] }).subs.length > 0;
+  if (!conTelegram && !conPush) return { saltato: "nessun canale attivo: attiva le notifiche nell'app o imposta Telegram" };
   const g = await caricaGiorno(0, null, 60), ymd = romaYMD(Date.now()), ora = Date.now();
   if (!g.partite.length) return { saltato: "nessuna partita" };
   const f = await leggiForma(env), stato = f.avvisi || {}, oggi = stato[ymd] || {}, fatto = [];
@@ -169,7 +218,8 @@ async function cronAvvisi(env) {
       t += `\n\n${s.id === "q20" ? "💣" : "🎟"} ${s.nome} · quota giusta ${s.quotaEqua.toFixed(2)} · si centra il ${pc(s.prob)}\n` + s.legs.map((l) => `• ${l.testo} (${l.partita}) ${pc(l.prob)}`).join("\n");
     t += `\n\nLa quota giusta è calcolata dalle probabilità: i bookmaker pagano un po' meno.`;
     t += `\n\nSono stime del modello, non certezze.${env.APP_URL ? "\n" + env.APP_URL : ""}`;
-    await telegram(env, t); oggi.d = 1; fatto.push("riepilogo");
+    const schQ = (D.schedine || []).filter((x) => /^q\d+$/.test(x.id));
+    await avvisa(env, "🏀 Le giocate di oggi", t, `${D.partite.filter((p) => p.stato === "pre").length} partite · ${schQ.length ? "schedine quota " + schQ.map((x) => x.obiettivo).join(", ") + " pronte" : "migliori giocate pronte"}`); oggi.d = 1; fatto.push("riepilogo");
   }
   // 2) risultati: una volta, quando tutte le partite del giorno sono finite
   if (!oggi.e && g.partite.every((p) => p.stato === "post")) {
@@ -181,7 +231,7 @@ async function cronAvvisi(env) {
       let t = `📊 Risultati di oggi: ${ok} giocate su ${r.length} centrate (${pc(ok / r.length)})\n\n` + Object.entries(per).map(([k, [a, b]]) => `• ${k}: ${a}/${b}`).join("\n");
       const best = r.filter((x) => x.esito === 1).sort((a, b) => b.prob - a.prob).slice(0, 3);
       if (best.length) t += `\n\nCentrate: ` + best.map((x) => x.testo).join("; ");
-      await telegram(env, t); oggi.e = 1; fatto.push("risultati");
+      await avvisa(env, "📊 Risultati di oggi", t, `${ok} giocate su ${r.length} centrate (${pc(ok / r.length)})`); oggi.e = 1; fatto.push("risultati");
     }
   }
   if (fatto.length) {
@@ -379,6 +429,10 @@ export default {
       if (p === "/api/storico") return J(await apiStorico(env));
       if (p === "/api/aggiorna-quote") return J(await cronQuote(env, true));
       if (p === "/api/avviso-prova") { if (!env.TELEGRAM_TOKEN || url.searchParams.get("k") !== String(env.TELEGRAM_CHAT_ID)) return ERR("non autorizzato", 403); await telegram(env, "✅ NBA Schedine è collegata a Telegram: da ora ricevi qui il riepilogo prima delle partite e i risultati a fine giornata."); return J({ ok: true }); }
+      if (p === "/api/push-chiave") { if (!dbOk(env)) return ERR("serve Supabase", 503); return J({ chiave: (await chiaviVapid(env)).pub }); }
+      if (p === "/api/push-iscrivi" && req.method === "POST") { if (!dbOk(env)) return ERR("serve Supabase", 503); await iscriviPush(env, await req.json()); return J({ ok: true }); }
+      if (p === "/api/push-prova" && req.method === "POST") { const r = await pushATutti(env, "✅ Notifiche attive", "NBA Schedine ti avviserà con il riepilogo ogni mattina e i risultati a fine giornata."); return J(r); }
+      if (p === "/api/ultimo-avviso") { const a = dbOk(env) ? await rigaForma(env, "_ultimoavviso") : null; return J(a || { titolo: "NBA Schedine", testo: "Apri l'app per vedere le giocate", url: "/#/" }, 0); }
       if (p === "/api/h2h") { const x = (url.searchParams.get("a") || "").toUpperCase(), y = (url.searchParams.get("b") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(x) || !/^[A-Z]{2,4}$/.test(y)) return ERR("sigla non valida", 400); return J({ a: x, b: y, partite: await testaATesta(x, y) }, 1800); }
       if (p === "/api/ultime") { const s = (url.searchParams.get("s") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(s)) return ERR("sigla non valida", 400); return J({ s, ultime: await caricaUltime(s) }, 600); }
       return ERR("non trovato", 404);
