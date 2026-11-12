@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "24";
+const VERSIONE = "25";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Squadre e totali", "ti-chart-bar", ["Vincente", "Squadra", "Totale"]], ["Punti", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]]];
@@ -592,6 +592,23 @@ function novitaLive() {
   const l = eventiLive.filter((e) => Date.now() - e.t < 15 * 60000).slice(-4).reverse(); if (!l.length) return "";
   return `<div class="sub">Appena successo</div>` + l.map((e) => `<div class="card riga" style="padding:9px 12px;border-left:3px solid ${e.ok ? GR : RD}"><div style="min-width:0"><div style="font-weight:600">${esc(e.testo)}</div><div class="s">${esc(e.partita)}</div></div><b style="color:${e.ok ? GR : RD}">${e.ok ? "Centrata" : "Persa"}</b></div>`).join("");
 }
+
+// formazioni in riga: nome a sinistra, statistiche a destra
+function formazioniLive(D, p) {
+  if (!p.giocatori.length) return `<div class="vuoto" style="margin-top:12px">Formazioni e statistiche non ancora disponibili da ESPN.</div>`;
+  const col = (g) => g.pts ?? 0;
+  const tab = (sq) => {
+    const l = p.giocatori.filter((g) => g.sq === sq); if (!l.length) return "";
+    const top = Math.max(...l.map(col));
+    const rg = (g) => { const n = g.nome.split(" "), br = n.length > 1 ? n[0][0] + ". " + n.slice(1).join(" ") : g.nome;
+      const hot = col(g) >= 20 || (g.pts >= 10 && g.reb >= 10) || (g.pts >= 10 && g.ast >= 10);
+      return `<tr class="${hot ? "hot" : ""}"><td class="nm"><div class="nmi">${g.pid ? foto(g.pid, 22) : ""}<span>${esc(br)}${g.pts === top && top > 0 ? ' <i class="ti ti-flame" style="color:' + OR + '"></i>' : ""}</span></div></td><td class="pt">${g.pts ?? 0}</td><td>${g.reb ?? 0}</td><td>${g.ast ?? 0}</td><td>${g.tre ?? "–"}</td><td>${g.stl ?? 0}</td><td>${g.blk ?? 0}</td><td class="${(g.pf ?? 0) >= 4 ? "fl" : ""}">${g.pf ?? 0}</td><td class="mn">${Math.round(g.min ?? 0)}</td></tr>`; };
+    const tit = l.filter((g) => g.tit), pan = l.filter((g) => !g.tit).sort((a, b) => (b.min || 0) - (a.min || 0));
+    const hd = `<tr class="th"><th></th><th>PT</th><th>RB</th><th>AS</th><th>3P</th><th>PR</th><th>ST</th><th>FL</th><th>MIN</th></tr>`;
+    return `<div class="card fz"><div class="lg" style="margin-bottom:4px">${logo(sq, 24)}<b>${esc(T(D, sq).n)}</b><span class="s" style="margin-left:auto">${sq === p.casa ? "casa" : "trasferta"}</span></div><table class="bx">${hd}${tit.length ? `<tr class="sec"><td colspan="9">Quintetto base</td></tr>` + tit.map(rg).join("") : ""}${pan.length ? `<tr class="sec"><td colspan="9">Panchina</td></tr>` + pan.map(rg).join("") : ""}</table></div>`;
+  };
+  return `<div class="sub">Formazioni e statistiche</div>` + tab(p.trasf) + tab(p.casa) + `<div class="cap" style="margin-top:0">PT punti · RB rimbalzi · AS assist · 3P triple (segnate-tentate) · PR palle rubate · ST stoppate · FL falli (rosso da 4) · MIN minuti. In arancione chi ha 20+ punti o una doppia doppia.</div>`;
+}
 async function vistaLive(primo = true) {
   if (primo) APP.innerHTML = topBar() + skel();
   let D; try { D = await api("/api/live", 3000); } catch (e) { if (primo) APP.innerHTML = topBar() + errBox(e); timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000); return; }
@@ -604,15 +621,10 @@ async function vistaLive(primo = true) {
   }
   for (const p of D.partite) {
     h += schedaLive(D, p) + grafLive(p);
+    h += formazioniLive(D, p);
     if (p.segnali && p.segnali.length) h += `<div class="sub"><span class="pill" style="color:${OR}"><span class="dot"></span>Segnali live</span> <span class="s">nati durante la partita</span></div>` + p.segnali.map(rigaSegnale).join("");
     const picks = [...p.picks].sort((a, b) => (a.pLive >= 0.995) - (b.pLive >= 0.995) || b.pLive - a.pLive);
-    if (picks.length) h += `<div class="sub">Giocate di questa partita</div>` + picks.map(rigaLive).join("");
-    if (p.giocatori.length) {
-      const tab = (sq) => { const l = p.giocatori.filter((g) => g.sq === sq); if (!l.length) return ""; const rg = (g) => `<div class="riga rg"><span style="min-width:0">${esc(g.nome)}</span><b style="white-space:nowrap">${g.pts ?? 0} · ${g.reb ?? 0} · ${g.ast ?? 0} · ${Math.round(g.min ?? 0)}</b></div>`;
-        const tit = l.filter((g) => g.tit), pan = l.filter((g) => !g.tit);
-        return `<div class="card"><div class="riga" style="padding-bottom:4px"><div class="lg">${logo(sq, 24)}<b>${esc(T(D, sq).n)}</b></div><span class="s">PT · RIM · AST · MIN</span></div>${tit.length ? `<div class="s" style="padding:4px 0">QUINTETTO BASE</div>` + tit.map(rg).join("") : ""}${pan.length ? `<div class="s" style="padding:8px 0 4px">PANCHINA</div>` + pan.map(rg).join("") : ""}</div>`; };
-      h += `<div class="sub">Formazioni e statistiche</div>` + tab(p.trasf) + tab(p.casa);
-    }
+    if (picks.length) h += `<div class="sub">Le nostre giocate su questa partita</div>` + picks.map(rigaLive).join("");
     h += `<a class="btn" style="display:block;text-align:center" href="#/partita/${p.id}">Apri lo studio di questa partita</a>`;
   }
   const y = window.scrollY; APP.innerHTML = h; window.scrollTo(0, y);
