@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "31";
+const VERSIONE = "32";
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
 const MERC = { Punti: { k: "pts", u: "pt" }, Rimbalzi: { k: "reb", u: "rimb." }, Assist: { k: "ast", u: "ass." } };
 const SC = [["Punti giocatori", "ti-target", ["Punti"]], ["Assist", "ti-users", ["Assist"]], ["Rimbalzi", "ti-arrows-up-down", ["Rimbalzi"]], ["Totali partita", "ti-chart-bar", ["Totale"]], ["Punti squadre", "ti-shield", ["Squadra"]], ["Vincente", "ti-trophy", ["Vincente"]]];
@@ -112,16 +112,15 @@ function schedaPartita(D, p, topPick, cliccabile) {
   const centro = p.stato === "pre"
     ? `<div class="mid"><div class="ora">${esc(String(p.ora).slice(-5))}</div><div class="s">${esc(String(p.ora).slice(0, 5))}</div></div>`
     : `<div class="mid"><div class="sc"><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="t">${p.ptTr ?? 0}</span><i>-</i><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="c">${p.ptCasa ?? 0}</span></div></div>`;
-  let chips = `<span class="chip">Totale ${r.totale.toFixed(1)}</span><span class="chip">Spread ${esc(T(D, fav).b)} -${Math.abs(r.margine).toFixed(1)}</span>`;
-  if (topPick) chips += `<span class="chip" style="color:${GR}">Top: ${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
+  let chips = `<span class="chip">Totale ${r.totale.toFixed(0)}</span>`;
+  if (topPick) chips += `<span class="chip" style="color:${GR}">${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
-  if (p.fs) for (const [s, f] of [[p.trasf, p.fs.trasf], [p.casa, p.fs.casa]]) if (f && f.n >= 5) chips += `<span class="chip">${esc(T(D, s).b)} ultime ${f.n}: ${f.v}V · ${f.pf.toFixed(0)}-${f.pa.toFixed(0)}</span>`;
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
   return `<${tag} class="card gm${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
   <div class="riga" style="margin-bottom:10px"><span class="pill" data-pill style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>
   <div class="mu">${team(p.trasf, "trasferta", r.ptTr)}${centro}${team(p.casa, "casa", r.ptCasa)}</div>${p.stato !== "pre" ? `<div data-qt>${tabQuarti(p, D)}</div>` : ""}
   <div class="bar"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
-  <div class="riga s" style="margin:4px 0 10px"><span><b style="color:#e8eaf0">${pct(1 - r.pw)}</b> ${esc(p.trasf)}</span><span>probabilità di vittoria</span><span>${esc(p.casa)} <b style="color:#e8eaf0">${pct(r.pw)}</b></span></div>${chips}</${tag}>`;
+  <div class="riga s" style="margin:4px 0 8px"><b style="color:#e8eaf0">${pct(1 - r.pw)}</b><b style="color:#e8eaf0">${pct(r.pw)}</b></div>${chips}</${tag}>`;
 }
 const raggruppa = (picks) => [["Molto probabili (80% o più)", picks.filter((x) => x.prob >= 0.8)], ["Probabili (70-80%)", picks.filter((x) => x.prob >= 0.7 && x.prob < 0.8)], ["Da valutare (sotto il 70%)", picks.filter((x) => x.prob < 0.7)]];
 
@@ -160,7 +159,7 @@ function hero(D) {
   const n = D.partite.length; if (!n) return "";
   const live = D.partite.filter((p) => p.stato === "in").length, fin = D.partite.filter((p) => p.stato === "post").length, pre = n - live - fin;
   const top = D.picks.find((x) => D.partite.find((p) => p.id === x.g && p.stato === "pre")) || D.picks[0];
-  return `<div class="hero"><div class="hn">${n}</div><div style="min-width:0"><div class="ht">${n === 1 ? "partita" : "partite"} in programma</div><div class="s">${live ? `<span class="dot"></span>${live} in corso · ` : ""}${pre} da giocare · ${fin} finite</div>${top ? `<div class="htop"><i class="ti ti-star-filled"></i> ${esc(top.testo)} <b>${pct(top.prob)}</b></div>` : ""}</div></div>`;
+  return `<div class="hero"><div class="hn">${n}</div><div style="min-width:0"><div class="ht">${n === 1 ? "partita" : "partite"} in programma</div><div class="s">${live ? `<span class="dot"></span>${live} in corso · ` : ""}${pre} da giocare · ${fin} finite</div></div></div>`;
 }
 // punteggi che si aggiornano da soli (ogni 10 secondi) quando ci sono partite in corso o vicine all'inizio
 function seguiPunteggi(D) {
@@ -212,12 +211,11 @@ function disegnaPartite(D, conPoll, daCache) {
   h += avvisiDati(D, daCache);
   h += hero(D);
   h += riquadriConsigli(D);
-  h += migliori(D);
-  h += confrontoMercato(D);
+  { const m = confrontoMercato(D); if (m) h += `<details class="dt"><summary>Confronto con i bookmaker</summary>${m}</details>`; }
   if (D.partite.length) h += `<h2>Tutte le partite</h2>`;
   h += D.partite.map((p) => schedaPartita(D, p, top(p.id), true)).join("");
   if (D.ieri.length) {
-    h += `<h2>Risultati di ieri</h2>` + D.ieri.map((p) => `<div class="card"><div class="riga"><div class="lg">${logo(p.trasf, 28)}<b>${esc(p.trasf)}</b></div><b style="font-size:18px">${p.ptTr} - ${p.ptCasa}</b><div class="lg"><b>${esc(p.casa)}</b>${logo(p.casa, 28)}</div></div></div>`).join("");
+    h += `<details class="dt"><summary>Risultati di ieri (${D.ieri.length})</summary>` + D.ieri.map((p) => `<div class="card"><div class="riga"><div class="lg">${logo(p.trasf, 28)}<b>${esc(p.trasf)}</b></div><b style="font-size:18px">${p.ptTr} - ${p.ptCasa}</b><div class="lg"><b>${esc(p.casa)}</b>${logo(p.casa, 28)}</div></div></div>`).join("") + `</details>`;
   }
   h += `<button class="btn" id="agg"><i class="ti ti-refresh"></i> Aggiorna ora</button>`;
   APP.innerHTML = h; bindGiorni(); $("#agg").onclick = () => route(true);

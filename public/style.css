@@ -157,3 +157,10 @@ h2::before{content:"";width:4px;height:18px;border-radius:2px;background:linear-
 .bx tr.hot td.pt{color:var(--or)}
 .bx tr.sec td{color:var(--mut);font-size:10.5px;text-align:left;padding:8px 3px 2px;border-top:none;letter-spacing:.02em}
 .bx .ph,.bx img{width:22px!important;height:22px!important;border-radius:50%;flex-shrink:0}
+
+details.dt{margin:14px 0 4px}
+details.dt>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--card,#12151c);font-weight:600;font-size:14px}
+details.dt>summary::-webkit-details-marker{display:none}
+details.dt>summary::after{content:"+";color:var(--or);font-size:18px;line-height:1}
+details.dt[open]>summary::after{content:"–"}
+details.dt[open]>summary{margin-bottom:8px}
