@@ -203,3 +203,6 @@ details.pan{margin-top:4px}details.pan>summary{list-style:none;cursor:pointer;fo
 
 #miabar a.vuota{background:#1d212c;color:var(--or);border:1px solid rgba(255,138,42,.6);height:36px;font-size:13px}
 .top{padding-right:104px}
+/* niente zoom: né pizzico, né doppio tocco, né ingrandimento quando si tocca un campo */
+html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%}
+input,select,textarea{font-size:16px!important}
