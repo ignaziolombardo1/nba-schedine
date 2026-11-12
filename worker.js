@@ -1,5 +1,5 @@
 import { info, nome } from "./squadre.js";
-import { proiettaPartita, proiettaGiocatori, consigli, proposte, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
+import { proiettaPartita, proiettaGiocatori, consigli, proposte, proposteQuota, valuta, phi, STD, frazioneGara, probLive, segnaliLive } from "./modello.js";
 import { aggiornaQuote, chiaveGara } from "./quote.js";
 import { romaYMD, caricaGiorno, caricaStatistiche, caricaInfortuni, caricaBoxscore, caricaUltime, testaATesta, caricaGamelog, dataUS, get } from "./espn.js";
 
@@ -157,14 +157,17 @@ async function cronAvvisi(env) {
   if (!g.partite.length) return { saltato: "nessuna partita" };
   const f = await leggiForma(env), stato = f.avvisi || {}, oggi = stato[ymd] || {}, fatto = [];
   const pre = g.partite.filter((p) => p.stato === "pre"), prima = pre.map((p) => Date.parse(p.iso)).sort((a, b) => a - b)[0];
-  // 1) riepilogo della giornata: una volta, nelle 4 ore prima della prima partita
-  if (!oggi.d && prima && prima - ora < 4 * 3600e3) {
+  // 1) riepilogo della giornata: una volta, dalle 9 del mattino (ora italiana) in poi; oppure, se non è partito, nelle 4 ore prima della prima partita
+  const oraRoma = +new Date(ora).toLocaleString("en-GB", { timeZone: "Europe/Rome", hour: "2-digit", hour12: false });
+  if (!oggi.d && pre.length && ((oraRoma >= 9 && oraRoma < 23) || (prima && prima - ora < 4 * 3600e3))) {
     const D = await apiGiorno(env, { waitUntil: (p) => p.catch(() => {}) }, 0);
     const prePick = D.picks.filter((x) => D.partite.find((p) => p.id === x.g && p.stato === "pre")).slice(0, 6);
     let t = `🏀 NBA di oggi: ${g.partite.length} partite, la prima alle ${g.partite.filter((p) => p.stato === "pre").sort((a, b) => (a.iso < b.iso ? -1 : 1))[0].ora.slice(-5)}\n`;
     if (prePick.length) t += `\nMigliori giocate\n` + prePick.map((x) => `• ${x.testo} (${x.partita}) ${pc(x.prob)}`).join("\n");
-    const s = (D.schedine || []).find((x) => x.id === "sicura") || (D.schedine || [])[0];
-    if (s) t += `\n\nSchedina "${s.nome}" (tutte centrate ${pc(s.prob)}, quota giusta ${s.quotaEqua.toFixed(2)})\n` + s.legs.map((l) => `• ${l.testo} ${pc(l.prob)}`).join("\n");
+    const sch = (D.schedine || []).filter((x) => /^q\d+$/.test(x.id));
+    for (const s of sch.length ? sch : [(D.schedine || []).find((x) => x.id === "sicura") || (D.schedine || [])[0]].filter(Boolean))
+      t += `\n\n${s.id === "q20" ? "💣" : "🎟"} ${s.nome} · quota giusta ${s.quotaEqua.toFixed(2)} · si centra il ${pc(s.prob)}\n` + s.legs.map((l) => `• ${l.testo} (${l.partita}) ${pc(l.prob)}`).join("\n");
+    t += `\n\nLa quota giusta è calcolata dalle probabilità: i bookmaker pagano un po' meno.`;
     t += `\n\nSono stime del modello, non certezze.${env.APP_URL ? "\n" + env.APP_URL : ""}`;
     await telegram(env, t); oggi.d = 1; fatto.push("riepilogo");
   }
@@ -246,7 +249,7 @@ async function apiGiorno(env, ctx, offset, data = null) {
     }
     // schedine proposte: salvate per vedere nel tempo quante vengono centrate
     const dayYMD = data || romaYMD(Date.now() + offset * 86400000);
-    for (const s of proposte(picks, gare)) {
+    for (const s of [...proposte(picks, gare), ...proposteQuota(picks, gare)]) {
       const chiave = `sch|${dayYMD}|${s.id}`;
       righe[chiave] = { chiave, event_id: s.legs[0].g, data: GIORNO, partita: s.nome, tipo: "Schedina", testo: `${s.nome}: ` + s.legs.map((l) => l.testo).join(" + "), squadra: s.id, prob: s.prob, stima: JSON.stringify(s.legs.map((l) => chiaveGiocata(l))) };
     }
@@ -267,7 +270,7 @@ async function apiGiorno(env, ctx, offset, data = null) {
   const finiteNome = new Set();
   return { aggiornato: new Date().toISOString(), offset, squadre: sq, linee: g.linee, ieri: g.ieri, b2b,
     salute,
-    schedine: proposte(picks, gare).map((s) => ({ ...s, chiave: `sch|${data || romaYMD(Date.now() + offset * 86400000)}|${s.id}` })), valore: dovePiuDiverso(gare), quote: fm.quote ? { t: fm.quote.t, crediti: fm.quote.crediti, partite: Object.keys(fm.quote.giochi || {}).length } : null,
+    schedine: [...proposte(picks, gare), ...proposteQuota(picks, gare)].map((s) => ({ ...s, chiave: `sch|${data || romaYMD(Date.now() + offset * 86400000)}|${s.id}` })), valore: dovePiuDiverso(gare), quote: fm.quote ? { t: fm.quote.t, crediti: fm.quote.crediti, partite: Object.keys(fm.quote.giochi || {}).length } : null,
     partite: gare.map((x) => ({ id: x.id, casa: x.casa, trasf: x.trasf, ora: x.ora, iso: x.iso, fs: x.fs, stato: x.stato, dettaglio: x.dettaglio, ptCasa: x.ptCasa, ptTr: x.ptTr, qCasa: x.qCasa, qTr: x.qTr,
       r: { ...x.r, pw: phi(x.r.margine / STD.Spread) }, giocatori: x.giocatori, inf: x.inf })),
     picks, diag: [...stat.diag, `forma: ${fm.n || 0} giocatori`, `partite: ${gare.length}`, `linee: ${Object.keys(g.linee).length}`, `infortuni: ${Object.keys(infortuni).length}`, `registro: ${registro}`, ...errori] };

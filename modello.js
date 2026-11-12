@@ -237,6 +237,40 @@ export function segnaliLive(gara, box, giocatori) {
 
 // ---------- PROPOSTE DI SCHEDINA
 // Una sola giocata per partita (le giocate della stessa partita sono legate tra loro). Probabilità unita = prodotto delle singole.
+
+// schedine "a quota": 2, 5, 10 e una bomba da 20. La quota è quella "giusta" (1/probabilità): i bookmaker pagano un po' meno.
+export function proposteQuota(picks, gare) {
+  const pre = new Map(gare.filter((g) => g.stato === "pre").map((g) => [g.id, g]));
+  const cand = picks.filter((x) => pre.has(x.g)).sort((a, b) => b.prob - a.prob);
+  const nomi = { 2: ["Quota 2", "Poche giocate sicure", "ok", 0.72], 5: ["Quota 5", "Una via di mezzo", "mid", 0.68], 10: ["Quota 10", "Rischio alto, paga bene", "alta", 0.62], 20: ["La bomba quota 20", "Difficile: giocala solo con poco", "alta", 0.58] };
+  const out = [];
+  const ammessa = (x, legs, usati, perGara) => {
+    const chiave = x.pid || x.testo; if (usati.has(chiave)) return false;
+    if ((perGara[x.g] || 0) >= 2) return false;
+    if (legs.some((l) => l.g === x.g && l.tipo === x.tipo)) return false;
+    const gr = ["Totale", "Squadra", "Vincente"]; // totale, squadra e vincente della stessa partita sono molto correlati
+    if (legs.some((l) => l.g === x.g && gr.includes(l.tipo) && gr.includes(x.tipo))) return false;
+    return true;
+  };
+  for (const t of [2, 5, 10, 20]) {
+    const [nome, sotto, tono, minP] = nomi[t];
+    let legs = [], q = 1;
+    // meno giocate possibile: ognuna con probabilità vicina a t^(-1/k), così la quota totale arriva al bersaglio
+    for (let k = 2; k <= 8; k++) {
+      const voluta = Math.pow(t, -1 / k), L = [], usati = new Set(), perGara = {};
+      const ord = cand.filter((x) => x.prob >= minP).sort((a, b) => Math.abs(a.prob - voluta) - Math.abs(b.prob - voluta));
+      for (const x of ord) { if (L.length >= k) break; if (ammessa(x, L, usati, perGara)) { L.push(x); usati.add(x.pid || x.testo); perGara[x.g] = (perGara[x.g] || 0) + 1; } }
+      const qq = L.reduce((a, x) => a / x.prob, 1);
+      if (L.length === k && qq >= t * 0.85 && qq <= t * 1.4) { legs = L; q = qq; break; }
+      if (L.length < k) break;
+    }
+    if (legs.length < 2) continue;
+    const p = legs.reduce((a, x) => a * x.prob, 1);
+    out.push({ id: "q" + t, nome, sotto, tono, prob: p, quotaEqua: 1 / p, prima: legs.map((x) => pre.get(x.g).ora).sort()[0], stessaPartita: new Set(legs.map((x) => x.g)).size < legs.length, obiettivo: t,
+      legs: legs.map((x) => ({ g: x.g, testo: x.testo, tipo: x.tipo, partita: x.partita, prob: x.prob, pid: x.pid || null, squadra: x.squadra || null, stima: x.stima, ora: pre.get(x.g).ora })) });
+  }
+  return out;
+}
 export function proposte(picks, gare) {
   const pre = new Map(gare.filter((g) => g.stato === "pre").map((g) => [g.id, g]));
   const valide = picks.filter((x) => pre.has(x.g) && !["Squadra"].includes(x.tipo));
