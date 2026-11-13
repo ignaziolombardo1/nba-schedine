@@ -310,6 +310,17 @@ export function proposte(picks, gare) {
       legs: legs.map((x) => ({ g: x.g, testo: x.testo, tipo: x.tipo, partita: x.partita, prob: x.prob, pid: x.pid || null, squadra: x.squadra || null, stima: x.stima, ora: pre.get(x.g).ora })) };
   })() : null;
   if (gioc) out.push(gioc);
+  // le vincenti: il segno 1 (casa) o 2 (trasferta) delle partite più chiare, come una schedina all'italiana
+  {
+    const m = new Map();
+    for (const x of valide) { if (x.tipo !== "Vincente" || x.prob < 0.62) continue; const cur = m.get(x.g); if (!cur || x.prob > cur.prob) m.set(x.g, x); }
+    const legs = [...m.values()].sort((a, b) => b.prob - a.prob).slice(0, 6);
+    if (legs.length >= 2) {
+      const p = legs.reduce((a, x) => a * x.prob, 1);
+      out.push({ id: "vincenti", nome: "Le vincenti", sotto: "Chi vince le partite più chiare: 1 casa, 2 trasferta", tono: "mid", prob: p, quotaEqua: 1 / p, prima: legs.map((x) => pre.get(x.g).ora).sort()[0], stessaPartita: false,
+        legs: legs.map((x) => ({ g: x.g, testo: `${x.squadra === pre.get(x.g).casa ? "1" : "2"} · ${x.testo}`, tipo: x.tipo, partita: x.partita, prob: x.prob, pid: null, squadra: x.squadra || null, stima: x.stima, ora: pre.get(x.g).ora })) });
+    }
+  }
   // evita proposte identiche
   const viste = new Set();
   return out.filter((s) => { const k = s.legs.map((l) => l.testo).join("|"); if (viste.has(k)) return false; viste.add(k); return true; });
