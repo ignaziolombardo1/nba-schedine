@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "44";
+const VERSIONE = "45";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -381,8 +381,21 @@ function statisticheRegistro(chiuse) {
 // Salva solo esito e nota sul registro attuale: una giocata aggiunta o tolta nel frattempo non si perde mai
 function salvaReg(nuovo) {
   const m = new Map(nuovo.map((r) => [r.id, r])), att = ls.get("registro", []);
-  const out = att.map((r) => { const n = m.get(r.id); return n && r.esito == null ? { ...r, esito: n.esito, nota: n.nota } : r; });
+  const out = att.map((r) => { const n = m.get(r.id); return n ? { ...r, es: n.es, ...(r.esito == null ? { esito: n.esito, nota: n.nota } : {}) } : r; });
   ls.set("registro", out); return out;
+}
+// Una riga per ogni giocata della schedina: presa o sbagliata, quanto è stato fatto e di quanto
+function dettaglioLegs(r) {
+  if (!r.legs || !r.es || r.es.length !== r.legs.length) return "";
+  return r.legs.map((l, i) => {
+    const e = r.es[i], sg = +l.soglia, over = l.dir !== "under", u = { pts: "pt", reb: "reb", ast: "ast", tot: "pt", sq: "pt" }[l.k] || "";
+    if (e.esito === 2) return `<div class="s" style="margin-top:4px;color:${AM}"><i class="ti ti-circle-dashed"></i> ${esc(l.testo)} · annullata (non ha giocato)</div>`;
+    if (e.esito == null) return `<div class="s" style="margin-top:4px"><i class="ti ti-clock"></i> ${esc(l.testo)} · ancora da giocare</div>`;
+    const ok = e.esito === 1, c = ok ? GR : RD;
+    let t = "";
+    if (e.cur != null && sg) { const d = over ? e.cur - sg : sg - e.cur; t = ` · fatto ${e.cur} ${u} (${d >= 0 ? "+" : ""}${(Math.round(d * 10) / 10).toString().replace(".", ",")} ${ok ? "sopra" : "sotto"} la linea)`; }
+    return `<div class="s" style="margin-top:4px;color:${c}"><i class="ti ${ok ? "ti-circle-check-filled" : "ti-circle-x-filled"}"></i> ${esc(l.testo)}${t}</div>`;
+  }).join("");
 }
 let aggiornandoReg = false;
 // Controlla da solo le giocate aperte: si chiama all'avvio, al ritorno nell'app, nel Live e nel Registro
@@ -399,13 +412,15 @@ async function aggiornaRegistro(reg = ls.get("registro", [])) {
       reg = salvaReg(reg);
     } catch {}
   }
-  const conLegs = reg.filter((r) => r.esito == null && r.legs && r.legs.length);
+  const lim = new Date(Date.now() - 4 * 86400000).toISOString().slice(0, 10), conLegs = reg.filter((r) => r.legs && r.legs.length && (r.esito == null || (String(r.data) >= lim && (!r.es || r.es.some((x) => x.esito == null)))));
   if (conLegs.length) {
     try {
       const R = await Promise.all(conLegs.map((r) => fetch("/api/valuta-giocate", { method: "POST", body: JSON.stringify({ legs: r.legs }) }).then((x) => x.json())));
       const mappa = new Map(conLegs.map((r, i) => [r.id, R[i].esiti || []]));
       reg = reg.map((r) => {
-        const es = mappa.get(r.id); if (!es || es.length !== r.legs.length) return r;
+        const es0 = mappa.get(r.id); if (!es0 || es0.length !== r.legs.length) return r;
+        const es = es0, dett = es0.map((x) => ({ esito: x.esito, cur: x.cur ?? null })); r = { ...r, es: dett };
+        if (r.esito != null) return r;
         if (es.some((x) => x.esito === 0)) return { ...r, esito: 0 };
         if (es.some((x) => x.esito === 2)) return { ...r, nota: "una giocata annullata (giocatore non sceso in campo): segna tu l'esito" };
         if (es.every((x) => x.esito === 1)) return { ...r, esito: 1 };
@@ -429,7 +444,7 @@ async function vistaRegistro() {
   else {
     h += `<div class="card riga" style="gap:14px;justify-content:flex-start"><div><div class="s">Risultato delle giocate chiuse</div><div style="font-family:'Barlow Condensed',Inter,sans-serif;font-size:36px;font-weight:700;color:${prof >= 0 ? GR : RD}">${chiuse.length ? eur(prof) : "–"}</div><div class="s">${vinte.length} centrate su ${chiuse.length}${puntato ? ` · rendimento ${(prof / puntato * 100).toFixed(0)}% su ${puntato.toFixed(2).replace(".", ",")} € puntati` : ""} · ${reg.filter((r) => r.esito == null).length} in attesa</div></div></div>`;
     h += statisticheRegistro(chiuse);
-    h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div>${r.nota ? `<div class="s" style="color:${AM}">${esc(r.nota)}</div>` : ""}<div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div>${r.esito == null ? `<div style="margin-top:6px"><button class="chipbtn" data-es="${i}|1" style="padding:3px 10px;font-size:11px">Vinta</button> <button class="chipbtn" data-es="${i}|0" style="padding:3px 10px;font-size:11px">Persa</button></div>` : ""}</div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div><div class="riga" style="margin-top:8px;gap:8px;justify-content:flex-start"><span class="s">Quota di chiusura</span><input class="linea" inputmode="decimal" data-cl="${i}" value="${r.chiusura || ""}" placeholder="es. 1.75" style="margin:0;width:90px;padding:4px 8px">${r.chiusura > 1 ? (() => { const c = r.quota / r.chiusura - 1; return `<b style="color:${c >= 0 ? GR : RD}">CLV ${c >= 0 ? "+" : ""}${(c * 100).toFixed(1)}%</b>`; })() : ""}</div></div>`).join("");
+    h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div>${dettaglioLegs(r)}${r.nota ? `<div class="s" style="color:${AM}">${esc(r.nota)}</div>` : ""}<div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div>${r.esito == null ? `<div style="margin-top:6px"><button class="chipbtn" data-es="${i}|1" style="padding:3px 10px;font-size:11px">Vinta</button> <button class="chipbtn" data-es="${i}|0" style="padding:3px 10px;font-size:11px">Persa</button></div>` : ""}</div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div><div class="riga" style="margin-top:8px;gap:8px;justify-content:flex-start"><span class="s">Quota di chiusura</span><input class="linea" inputmode="decimal" data-cl="${i}" value="${r.chiusura || ""}" placeholder="es. 1.75" style="margin:0;width:90px;padding:4px 8px">${r.chiusura > 1 ? (() => { const c = r.quota / r.chiusura - 1; return `<b style="color:${c >= 0 ? GR : RD}">CLV ${c >= 0 ? "+" : ""}${(c * 100).toFixed(1)}%</b>`; })() : ""}</div></div>`).join("");
   }
   if (reg.length) h += `<div class="grid2" style="margin-top:6px"><button class="btn" id="csv" style="margin:0">Scarica CSV</button><button class="btn" id="bak" style="margin:0">Copia backup</button></div>`;
   h += `<button class="btn" id="rip" style="margin:8px 0 0">Ripristina da backup incollato</button><div class="cap">Il registro vive solo su questo telefono: ogni tanto copia il backup e conservalo (ad esempio nelle note).</div>`;
@@ -838,11 +853,11 @@ function mieGiocateLive(D) {
   const oggi = new Date().toISOString().slice(0, 10), R = ls.get("registro", []).filter((r) => r.legs && r.legs.length && (r.esito == null || String(r.data) >= oggi || r.esito != null && String(r.data) >= new Date(Date.now() - 86400000).toISOString().slice(0, 10)));
   if (!R.length) return "";
   const col = { ok: GR, no: RD, in: OR, vant: GR, svant: AM, pre: MU, nd: MU };
-  return `<div class="sub"><i class="ti ti-ticket" style="color:${OR}"></i> Le mie giocate</div>` + R.map((r) => `<div class="card"><div class="riga"><b>${esc(r.nome)}</b><span class="s">${r.esito === 1 ? "<b style=\"color:" + GR + "\">VINTA</b> · " : r.esito === 0 ? "<b style=\"color:" + RD + "\">PERSA</b> · " : ""}quota ${r.quota} · ${r.puntata} €${r.esito == null ? `<button class="chipbtn" data-delm="${esc(r.id)}" style="padding:2px 9px;font-size:11px;margin-left:6px">Rimuovi</button>` : ""}</span></div>` + r.legs.map((l) => {
+  return `<div class="sub"><i class="ti ti-ticket" style="color:${OR}"></i> Le mie giocate</div>` + R.map((r) => `<div class="card"><div class="riga"><b>${esc(r.nome)}</b><span class="s">${r.esito === 1 ? "<b style=\"color:" + GR + "\">VINTA</b> · " : r.esito === 0 ? "<b style=\"color:" + RD + "\">PERSA</b> · " : ""}quota ${r.quota} · ${r.puntata} €${r.esito == null ? `<button class="chipbtn" data-delm="${esc(r.id)}" style="padding:2px 9px;font-size:11px;margin-left:6px">Rimuovi</button>` : ""}</span></div>` + (r.esito != null && r.es ? dettaglioLegs(r) : r.legs.map((l) => {
     const a = avanzamentoLeg(l, D), c = col[a.st] || MU, pr = a.soglia > 0 && a.cur != null ? Math.max(0, Math.min(100, (a.cur / a.soglia) * 100)) : 0;
     const ic = a.st === "ok" ? "ti-circle-check-filled" : a.st === "no" ? "ti-circle-x-filled" : "ti-circle-dashed";
     return `<div style="margin-top:10px"><div class="riga" style="gap:8px"><div style="min-width:0;flex:1"><i class="ti ${ic}" style="color:${c}"></i> ${esc(l.testo)}</div><b style="color:${c};white-space:nowrap">${esc(a.testo)}</b></div>${a.soglia > 0 ? `<div class="bar" style="height:4px;margin-top:4px"><div style="width:${pr}%;background:${c}"></div></div>` : ""}${a.p ? `<div class="s" style="margin-top:2px">${esc(a.p.dettaglio || "")}</div>` : ""}</div>`;
-  }).join("") + `</div>`).join("");
+  }).join("")) + `</div>`).join("");
 }
 const bloccoLive = {};
 async function vistaLive(primo = true) {
