@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "42";
+const VERSIONE = "43";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -378,10 +378,11 @@ function statisticheRegistro(chiuse) {
   <div class="s" style="margin-top:8px">Centrate ${(chiuse.filter((r) => r.esito === 1).length / chiuse.length * 100).toFixed(0)}% · previste in media ${(pm * 100).toFixed(0)}% · quota pareggio ${(1 / Math.max(0.01, chiuse.filter((r) => r.esito === 1).length / chiuse.length)).toFixed(2)}</div></div>
   <div class="sub">Rendimento per tipo di giocata</div>` + Object.entries(per).sort((x, y) => y[1].n - x[1].n).map(([t, c]) => `<div class="card riga" style="padding:9px 12px"><div><div style="font-weight:500">${esc(nomi[t] || t)}</div><div class="s">${c.ok}/${c.n} centrate · ${c.pu.toFixed(0)} € puntati</div></div><b style="color:${c.pr >= 0 ? GR : RD}">${eur(c.pr)} <span class="s">(${(c.pr / c.pu * 100).toFixed(0)}%)</span></b></div>`).join("");
 }
-async function vistaRegistro() {
-  const back = `<a class="back" href="#/storico"><i class="ti ti-chevron-left"></i>Storico</a>`;
-  APP.innerHTML = back + skel();
-  let reg = ls.get("registro", []);
+let aggiornandoReg = false;
+// Controlla da solo le giocate aperte: si chiama all'avvio, al ritorno nell'app, nel Live e nel Registro
+async function aggiornaRegistro(reg = ls.get("registro", [])) {
+  if (aggiornandoReg) return reg; aggiornandoReg = true;
+  try {
   if (reg.some((r) => r.esito == null)) {
     try {
       const S = await api("/api/storico", 0), m = new Map([...(S.schedine || []), ...(S.righe || [])].map((r) => [r.chiave, r.esito]));
@@ -406,6 +407,14 @@ async function vistaRegistro() {
       }); ls.set("registro", reg);
     } catch {}
   }
+  } finally { aggiornandoReg = false; }
+  return reg;
+}
+async function vistaRegistro() {
+  const back = `<a class="back" href="#/storico"><i class="ti ti-chevron-left"></i>Storico</a>`;
+  APP.innerHTML = back + skel();
+  let reg = ls.get("registro", []);
+  reg = await aggiornaRegistro(reg);
   const per = ls.get("regPer", 0), dal = per ? new Date(Date.now() - per * 86400000).toISOString().slice(0, 10) : "";
   const chiuse = reg.filter((r) => (r.esito === 0 || r.esito === 1) && String(r.data) >= dal), vinte = chiuse.filter((r) => r.esito === 1);
   const prof = chiuse.reduce((a, r) => a + (r.esito === 1 ? r.puntata * (r.quota - 1) : -r.puntata), 0), puntato = chiuse.reduce((a, r) => a + r.puntata, 0);
@@ -831,7 +840,7 @@ function mieGiocateLive(D) {
 }
 const bloccoLive = {};
 async function vistaLive(primo = true) {
-  if (primo) { APP.innerHTML = topBar() + skel(); delete APP.dataset.live; }
+  if (primo) { APP.innerHTML = topBar() + skel(); delete APP.dataset.live; aggiornaRegistro(); }
   let D; try { D = await api("/api/live", 3000); } catch (e) { if (primo) APP.innerHTML = topBar() + errBox(e); timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000); return; }
   if (!location.hash.startsWith("#/live")) return;
   aggiornaStoriaLive(D);
@@ -983,6 +992,7 @@ let ultimoNascosto = Date.now();
 document.addEventListener("visibilitychange", async () => {
   if (document.hidden) { ultimoNascosto = Date.now(); return; }
   const h = location.hash.replace(/^#/, "") || "/";
+  aggiornaRegistro();
   if (h.startsWith("/live")) { clearTimeout(timer); vistaLive(false); return; }
   if (h === "/" && Date.now() - ultimoNascosto > 30000) {
     try {
@@ -1001,4 +1011,5 @@ window.addEventListener("pagehide", salvaPosizione);
 let ripristinaY = null;
 { const u = ls.get("ult", null); if (u && Date.now() - u.t < 30 * 60000 && (!location.hash || location.hash === "#/") && u.h && u.h !== "#/") { location.hash = u.h; ripristinaY = u.y; } else if (u && Date.now() - u.t < 30 * 60000 && (!location.hash || location.hash === "#/")) ripristinaY = u.y; }
 route();
+setTimeout(() => aggiornaRegistro(), 2500);
 if (ripristinaY) for (const ms of [500, 1200, 2500]) setTimeout(() => window.scrollTo(0, ripristinaY), ms);
