@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "58";
+const VERSIONE = "60";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -89,11 +89,13 @@ document.addEventListener("click", async (e) => {
   if (fv) {
     e.preventDefault(); e.stopPropagation();
     const [t, id, nome, sq] = fv.dataset.fav.split("|"), P = pref();
-    if (t === "sq") P.sq = P.sq.includes(id) ? P.sq.filter((x) => x !== id) : [...P.sq, id];
+    if (t === "gm") P.gm = P.gm.includes(id) ? P.gm.filter((x) => x !== id) : [...P.gm, id].slice(-40);
+    else if (t === "sq") P.sq = P.sq.includes(id) ? P.sq.filter((x) => x !== id) : [...P.sq, id];
     else P.pl = P.pl.some((x) => x.pid === id) ? P.pl.filter((x) => x.pid !== id) : [...P.pl, { pid: id, nome, sq }];
     ls.set("pref", P); sincPref();
     if ((location.hash || "#/") === "#/" && ultimoD) { clearTimeout(timer); const y = window.scrollY; disegnaPartite(ultimoD, true); window.scrollTo(0, y); }
-    else { const on = siSegue(t, id); fv.classList.toggle("on", on); fv.textContent = on ? "★" : "☆"; }
+    else { const on = siSegue(t, id); fv.classList.toggle("on", on); if (t === "gm") fv.textContent = on ? "🔔" : "🔕"; else fv.textContent = on ? "★" : "☆"; }
+    if (t === "gm" && siSegue("gm", id)) avvisoNotifiche();
     return;
   }
   const tb = e.target.closest("[data-tab]");
@@ -197,13 +199,13 @@ function schedaPartita(D, p, topPick, cliccabile) {
     const q = (p.qTr || []).length ? `<div class="qr" data-qt>${(p.qTr || []).map((v, i) => `<span class="${p.stato === "in" && p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${(p.qCasa || [])[i] ?? 0}-${v}</span>`).join("")}</div>` : "";
     const fin = p.stato === "post";
     return `<${fin ? "div" : "a"} class="card gm cmp${p.stato === "in" ? " inlive" : ""}"${fin ? ` data-tab="${p.id}" data-casa="${p.casa}" data-trasf="${p.trasf}"` : ` href="#/partita/${p.id}"`} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}${fin ? ";cursor:pointer" : ""}">
-  <div class="riga" style="margin-bottom:4px"><span class="pill" data-pill style="color:${col}">${chip}</span><span class="s">${p.stato === "pre" ? `stimati ${r.ptCasa.toFixed(0)}-${r.ptTr.toFixed(0)}` : fin ? "Tabellino" : "Studia"} <i class="ti ${fin ? "ti-chevron-down" : "ti-chevron-right"}"></i></span></div>
+  <div class="riga" style="margin-bottom:4px"><span style="display:flex;align-items:center;gap:4px"><span class="pill" data-pill style="color:${col}">${chip}</span>${p.stato === "post" ? "" : campana(p.id)}</span><span class="s">${p.stato === "pre" ? `stimati ${r.ptCasa.toFixed(0)}-${r.ptTr.toFixed(0)}` : fin ? "Tabellino" : "Studia"} <i class="ti ${fin ? "ti-chevron-down" : "ti-chevron-right"}"></i></span></div>
   <div class="cg"><div class="tm cr" data-l="c">${lato(p.casa, "ca", 1)}</div>${mezzo}<div class="tm cr" data-l="t">${lato(p.trasf, "tr", 2)}</div></div>${q}
   <div class="bar" style="margin:6px 0 6px"><div style="width:${(r.pw * 100).toFixed(0)}%;background:${cc}"></div><div style="flex:1;background:${ct}"></div></div>${chips}</${fin ? "div" : "a"}>${fin ? `<div class="tabl" id="tb${p.id}" hidden></div>` : ""}`;
   }
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
   return `<${tag} class="card gm${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
-  <div class="riga" style="margin-bottom:10px"><span class="pill" data-pill style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>
+  <div class="riga" style="margin-bottom:10px"><span style="display:flex;align-items:center;gap:4px"><span class="pill" data-pill style="color:${col}">${chip}</span>${p.stato === "post" ? "" : campana(p.id)}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>
   <div class="mu">${team(p.casa, "casa", r.ptCasa, "c")}${centro}${team(p.trasf, "trasferta", r.ptTr, "t")}</div>${p.stato !== "pre" ? `<div data-qt>${tabQuarti(p, D)}</div>` : ""}
   <div class="bar"><div style="width:${(r.pw * 100).toFixed(0)}%;background:${cc}"></div><div style="flex:1;background:${ct}"></div></div>
   <div class="riga s" style="margin:4px 0 8px"><b style="color:#e8eaf0">1 · ${pct(r.pw)}</b><b style="color:#e8eaf0">${pct(1 - r.pw)} · 2</b></div>${chips}</${tag}>`;
@@ -300,8 +302,10 @@ function riquadriConsigli(D) {
   }).join("") + `</div>`;
 }
 // ---------- PREFERITI (squadre e giocatori seguiti, salvati sul telefono)
-const pref = () => { const v = ls.get("pref", null); return v && v.sq && v.pl ? v : { sq: [], pl: [] }; };
-const siSegue = (t, id) => pref()[t].some((x) => (t === "sq" ? x : x.pid) === id);
+const pref = () => { const v = ls.get("pref", null); return v && v.sq && v.pl ? { sq: v.sq, pl: v.pl, gm: v.gm || [] } : { sq: [], pl: [], gm: [] }; };
+const siSegue = (t, id) => pref()[t].some((x) => (t === "sq" || t === "gm" ? x : x.pid) === id);
+// campanella: avviso di inizio e fine per questa partita
+const campana = (id) => { const on = siSegue("gm", String(id)); return `<button class="star bell${on ? " on" : ""}" data-fav="gm|${esc(id)}||" aria-label="${on ? "Non avvisarmi" : "Avvisami per questa partita"}">${on ? "🔔" : "🔕"}</button>`; };
 const stella = (t, id, nome = "", sq = "") => { const on = siSegue(t, id); return `<button class="star${on ? " on" : ""}" data-fav="${t}|${esc(id)}|${esc(nome)}|${esc(sq)}" aria-label="${on ? "Non seguire più" : "Segui"}">${on ? "★" : "☆"}</button>`; };
 const partitaPreferita = (p) => { const P = pref(); return P.sq.includes(p.casa) || P.sq.includes(p.trasf) || P.pl.some((x) => x.sq === p.casa || x.sq === p.trasf); };
 function riquadroPreferiti(D) {
@@ -313,6 +317,16 @@ function riquadroPreferiti(D) {
   return `<div class="card"><div class="s" style="margin-bottom:4px">I tuoi preferiti oggi</div>${righe.join("")}</div>`;
 }
 // manda al server i preferiti di questo telefono (solo se le notifiche sono attive) per avvisare di ciò che segui
+// se il telefono non è ancora collegato alle notifiche, lo dice (una volta per apertura)
+async function avvisoNotifiche() {
+  try {
+    const reg = "serviceWorker" in navigator && "PushManager" in window ? await navigator.serviceWorker.ready : null, sb = reg ? await reg.pushManager.getSubscription() : null;
+    if (sb) return;
+    if (document.getElementById("avnot")) return;
+    const d = document.createElement("div"); d.id = "avnot"; d.className = "toastn";
+    d.innerHTML = `Per ricevere l'avviso attiva le notifiche: <a href="#/impostazioni" style="color:var(--or)">Impostazioni</a>`; document.body.appendChild(d); setTimeout(() => d.remove(), 6000);
+  } catch {}
+}
 async function sincPref() {
   try { if (!("serviceWorker" in navigator) || !("PushManager" in window)) return; const reg = await navigator.serviceWorker.ready, sb = await reg.pushManager.getSubscription(); if (!sb) return;
     await fetch("/api/push-pref", { method: "POST", body: JSON.stringify({ endpoint: sb.endpoint, pref: pref() }) }); } catch {}
@@ -375,7 +389,7 @@ function vistaImpostazioni() {
   h += `<div class="card"><div class="sub" style="margin-top:0">Quali giocate vedere</div>${Object.keys(IMP0.mercati).map((m) => `<label class="sw"><input type="checkbox" data-mk="${m}" ${i.mercati[m] !== false ? "checked" : ""}> ${esc({ Vincente: "Squadra vincente", Squadra: "Punti di una squadra", Totale: "Totale della partita" }[m] || m)}</label>`).join("")}</div>`;
   const pushOk = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
   h += `<div class="card"><div class="sub" style="margin-top:0"><i class="ti ti-bell"></i> Notifiche sul telefono</div>` + (pushOk
-    ? `<div class="cap" style="margin:4px 0 8px">Ogni mattina la Giocata del giorno e le schedine quota 2, 5, 10 e 20; a fine giornata i risultati. Per le squadre e i giocatori con la ★ ricevi anche l'inizio e la fine della partita, con i numeri dei tuoi giocatori.</div><div class="grid2"><button class="btn" id="pushOn" style="margin:0">Attiva</button><button class="btn" id="pushProva" style="margin:0">Invia prova</button></div><div class="cap" id="pushMsg" style="margin-bottom:0">${Notification.permission === "granted" ? "Permesso già concesso: tocca «Attiva» per collegare questo telefono." : Notification.permission === "denied" ? "Le notifiche sono bloccate nelle impostazioni del telefono per questa app." : ""}</div>`
+    ? `<div class="cap" style="margin:4px 0 8px">Ogni mattina la Giocata del giorno e le schedine quota 2, 5, 10 e 20; a fine giornata i risultati. Per le squadre e i giocatori con la ★ e per le partite con la 🔔 ricevi l'inizio e la fine della partita, con i numeri dei tuoi giocatori.</div><div class="grid2"><button class="btn" id="pushOn" style="margin:0">Attiva</button><button class="btn" id="pushProva" style="margin:0">Invia prova</button></div><div class="cap" id="pushMsg" style="margin-bottom:0">${Notification.permission === "granted" ? "Permesso già concesso: tocca «Attiva» per collegare questo telefono." : Notification.permission === "denied" ? "Le notifiche sono bloccate nelle impostazioni del telefono per questa app." : ""}</div>`
     : `<div class="cap" style="margin:4px 0 0">Per le notifiche su iPhone serve iOS 16.4 o più recente e l'app aperta dalla schermata Home: in Safari tocca Condividi → «Aggiungi alla schermata Home», poi apri l'app da lì e torna qui.</div>`) + `</div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Puntata predefinita nel registro (€)</div><input class="linea" inputmode="decimal" id="pun" value="${i.puntata}" style="margin-top:0"></div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Bankroll (€)</div><input class="linea" inputmode="decimal" id="bk" value="${i.bankroll}" style="margin-top:0"><div class="sub">Quanto del consiglio di Kelly seguire</div><div class="tabs">${[[0.1, "10%"], [0.25, "25%"], [0.5, "50%"]].map(([v, t]) => `<button class="chipbtn${i.kelly === v ? " on" : ""}" data-kl="${v}">${t}</button>`).join("")}</div><div class="cap">Il bankroll serve a calcolare la puntata consigliata e la curva nel registro. Meglio una frazione prudente di Kelly: 25% è lo standard dei tipster.</div></div>`;

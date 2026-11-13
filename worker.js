@@ -196,7 +196,7 @@ async function iscriviPush(env, sub) {
 // i preferiti di ogni telefono, per avvisare solo di quello che segue
 async function salvaPrefPush(env, d) {
   const el = (await rigaForma(env, "_push")) || { subs: [] }, sb = el.subs.find((x) => x.endpoint === (d || {}).endpoint); if (!sb) return false;
-  const P = d.pref || {}; sb.pref = { sq: (P.sq || []).slice(0, 30).map(String), pl: (P.pl || []).slice(0, 30).map((x) => ({ pid: String(x.pid), nome: String(x.nome || ""), sq: String(x.sq || "") })) };
+  const P = d.pref || {}; sb.pref = { gm: (P.gm || []).slice(0, 40).filter((x) => /^\d+$/.test(String(x))).map(String), sq: (P.sq || []).slice(0, 30).map(String), pl: (P.pl || []).slice(0, 30).map((x) => ({ pid: String(x.pid), nome: String(x.nome || ""), sq: String(x.sq || "") })) };
   await salvaRigaForma(env, "_push", el); return true;
 }
 async function ritiraAvviso(env, id) {
@@ -247,8 +247,8 @@ async function cronAvvisi(env) {
   }
   // 1b) preferiti: inizio e fine delle partite delle squadre (o dei giocatori) che ogni telefono segue
   {
-    const subs = ((await rigaForma(env, "_push").catch(() => null)) || { subs: [] }).subs.filter((x) => x.pref && (x.pref.sq.length || x.pref.pl.length));
-    const segue = (sb, p) => sb.pref.sq.includes(p.casa) || sb.pref.sq.includes(p.trasf) || sb.pref.pl.some((x) => x.sq === p.casa || x.sq === p.trasf);
+    const subs = ((await rigaForma(env, "_push").catch(() => null)) || { subs: [] }).subs.filter((x) => x.pref && ((x.pref.sq || []).length || (x.pref.pl || []).length || (x.pref.gm || []).length));
+    const segue = (sb, p) => (sb.pref.gm || []).includes(String(p.id)) || (sb.pref.sq || []).includes(p.casa) || (sb.pref.sq || []).includes(p.trasf) || (sb.pref.pl || []).some((x) => x.sq === p.casa || x.sq === p.trasf);
     oggi.i ||= {}; oggi.f ||= {};
     for (const p of g.partite) {
       if (!subs.some((sb) => segue(sb, p))) continue;
@@ -257,7 +257,7 @@ async function cronAvvisi(env) {
         let box = {}; try { box = await caricaBoxscore(p.id, 600); } catch {}
         const finale = `Finale: ${p.casa} ${p.ptCasa} - ${p.ptTr} ${p.trasf}`;
         for (const sb of subs.filter((x) => segue(x, p))) {
-          const righe = sb.pref.pl.filter((x) => x.sq === p.casa || x.sq === p.trasf).map((x) => { const b = box[x.pid]; return b ? `${x.nome}: ${b.pts ?? 0} pt, ${b.reb ?? 0} rb, ${b.ast ?? 0} as` : null; }).filter(Boolean);
+          const righe = (sb.pref.pl || []).filter((x) => x.sq === p.casa || x.sq === p.trasf).map((x) => { const b = box[x.pid]; return b ? `${x.nome}: ${b.pts ?? 0} pt, ${b.reb ?? 0} rb, ${b.ast ?? 0} as` : null; }).filter(Boolean);
           await accodaPush(env, { titolo: `🏁 ${p.casa} - ${p.trasf}`, testo: [finale, ...righe].join("\n"), url: `/#/partita/${p.id}` }, (x) => x.endpoint === sb.endpoint);
         }
         oggi.f[p.id] = 1; fatto.push("fine " + p.id);
