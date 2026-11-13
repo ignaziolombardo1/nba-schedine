@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "53";
+const VERSIONE = "55";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -172,7 +172,7 @@ function illumina(card, id, ptTr, ptCasa) {
   const prima = ultimiPt[id]; ultimiPt[id] = [ptTr, ptCasa]; if (!prima || !card) return;
   [[0, ptTr, "t"], [1, ptCasa, "c"]].forEach(([i, v, lato]) => {
     const d = v - prima[i]; if (!(d > 0)) return;
-    const tm = card.querySelectorAll(".tm")[lato === "t" ? 0 : 1]; if (!tm) return;
+    const tm = card.querySelector(`.tm[data-l="${lato}"]`) || card.querySelectorAll(".tm")[lato === "t" ? 0 : 1]; if (!tm) return;
     tm.dataset.plus = "+" + d; tm.classList.remove("glow"); void tm.offsetWidth; tm.classList.add("glow");
   });
 }
@@ -190,16 +190,16 @@ function schedaPartita(D, p, topPick, cliccabile) {
   if (topPick) chips += `<span class="chip" style="color:${GR}">${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
   if (cliccabile) {
-    const lato = (ab, ruolo) => `<div class="cl ${ruolo}">${logo(ab, 34)}<div class="tn">${esc(T(D, ab).b.length > 7 ? ab : T(D, ab).b)}</div>${stella("sq", ab)}</div>`;
+    const favC = r.pw >= 0.5, lato = (ab, ruolo, n) => `<div class="cl ${ruolo}">${logo(ab, 34)}<div class="tn"><b class="n12${p.stato === "pre" && (n === 1) === favC ? " fv" : ""}">${n}</b>${esc(ab)}${stella("sq", ab)}</div></div>`;
     const mezzo = p.stato === "pre"
-      ? `<div class="cm"><span class="w">${pct(1 - r.pw)}</span><i>-</i><span class="w">${pct(r.pw)}</span></div>`
-      : `<div class="cm"><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="t">${p.ptTr ?? 0}</span><i>-</i><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="c">${p.ptCasa ?? 0}</span></div>`;
-    const q = (p.qTr || []).length ? `<div class="qr" data-qt>${(p.qTr || []).map((v, i) => `<span class="${p.stato === "in" && p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${v}-${(p.qCasa || [])[i] ?? 0}</span>`).join("")}</div>` : "";
+      ? `<div class="cm"><span class="w">${pct(r.pw)}</span><i>-</i><span class="w">${pct(1 - r.pw)}</span></div>`
+      : `<div class="cm"><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="c">${p.ptCasa ?? 0}</span><i>-</i><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="t">${p.ptTr ?? 0}</span></div>`;
+    const q = (p.qTr || []).length ? `<div class="qr" data-qt>${(p.qTr || []).map((v, i) => `<span class="${p.stato === "in" && p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${(p.qCasa || [])[i] ?? 0}-${v}</span>`).join("")}</div>` : "";
     const fin = p.stato === "post";
     return `<${fin ? "div" : "a"} class="card gm cmp${p.stato === "in" ? " inlive" : ""}"${fin ? ` data-tab="${p.id}" data-casa="${p.casa}" data-trasf="${p.trasf}"` : ` href="#/partita/${p.id}"`} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}${fin ? ";cursor:pointer" : ""}">
   <div class="riga" style="margin-bottom:4px"><span class="pill" data-pill style="color:${col}">${chip}</span><span class="s">${p.stato === "pre" ? `stimati ${r.ptTr.toFixed(0)}-${r.ptCasa.toFixed(0)}` : fin ? "Tabellino" : "Studia"} <i class="ti ${fin ? "ti-chevron-down" : "ti-chevron-right"}"></i></span></div>
-  <div class="cg"><div class="tm cr">${lato(p.trasf, "tr")}</div>${mezzo}<div class="tm cr">${lato(p.casa, "ca")}</div></div>${q}
-  <div class="bar" style="margin:6px 0 6px"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>${chips}</${fin ? "div" : "a"}>${fin ? `<div class="tabl" id="tb${p.id}" hidden></div>` : ""}`;
+  <div class="cg"><div class="tm cr" data-l="c">${lato(p.casa, "ca", 1)}</div>${mezzo}<div class="tm cr" data-l="t">${lato(p.trasf, "tr", 2)}</div></div>${q}
+  <div class="bar" style="margin:6px 0 6px"><div style="width:${(r.pw * 100).toFixed(0)}%;background:${cc}"></div><div style="flex:1;background:${ct}"></div></div>${chips}</${fin ? "div" : "a"}>${fin ? `<div class="tabl" id="tb${p.id}" hidden></div>` : ""}`;
   }
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
   return `<${tag} class="card gm${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
@@ -274,7 +274,7 @@ function seguiPunteggi(D) {
         if (k && String(k.textContent) !== String(x.ptCasa)) { k.textContent = x.ptCasa; k.classList.remove("flash"); void k.offsetWidth; k.classList.add("flash"); }
         if (pl) pl.innerHTML = `<span class="dot"></span>Live · ${esc(x.dettaglio)}`;
         illumina(c, x.id, x.ptTr, x.ptCasa);
-        const qe = c.querySelector("[data-qt]"); if (qe) qe.innerHTML = qe.classList.contains("qr") ? (x.qTr || []).map((v, i) => `<span class="${x.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${v}-${(x.qCasa || [])[i] ?? 0}</span>`).join("") : tabQuarti(x, D);
+        const qe = c.querySelector("[data-qt]"); if (qe) qe.innerHTML = qe.classList.contains("qr") ? (x.qTr || []).map((v, i) => `<span class="${x.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${(x.qCasa || [])[i] ?? 0}-${v}</span>`).join("") : tabQuarti(x, D);
       }
       for (const p of D.partite) if (p.stato === "in" && !vive.has(p.id)) cambio = true;
       if (cambio) return route(true);
@@ -887,12 +887,12 @@ function ultimeHtml(D, sig, ul) {
 // ---------- LIVE
 function schedaLive(D, p) {
   const t = T(D, p.casa), v = T(D, p.trasf), cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#5a6378" : v.c;
-  const lato = (ab, r) => `<div class="tm cr"><div class="cl ${r}">${logo(ab, 34)}<div class="tn">${esc(T(D, ab).b.length > 7 ? ab : T(D, ab).b)}</div></div></div>`;
+  const lato = (ab, r, n, l) => `<div class="tm cr" data-l="${l}"><div class="cl ${r}">${logo(ab, 34)}<div class="tn"><b class="n12">${n}</b>${esc(T(D, ab).b.length > 7 ? ab : T(D, ab).b)}</div></div></div>`;
   return `<div class="card gm cmp inlive" data-lg="${p.id}" style="--ca:${ct};--cb:${cc}"><div class="riga" style="margin-bottom:4px"><span class="pill" style="color:${OR}"><span class="dot"></span>Live · ${esc(p.dettaglio)}</span><span class="s">Giocata al ${Math.round(p.f * 100)}%</span></div>
-  <div class="cg">${lato(p.trasf, "tr")}<div class="cm"><span class="big liveN">${p.ptTr}</span><i>-</i><span class="big liveN">${p.ptCasa}</span></div>${lato(p.casa, "ca")}</div>
-  <div class="qr">${(p.qTr || []).map((q, i) => `<span class="${p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${q}-${(p.qCasa || [])[i] ?? 0}</span>`).join("")}</div>
-  <div class="bar" style="margin:6px 0 2px"><div style="width:${((1 - p.pwLive) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
-  <div class="riga s" style="margin:0 0 6px"><span>${esc(p.trasf)} ${pct(1 - p.pwLive)}</span><span>vittoria adesso</span><span>${esc(p.casa)} ${pct(p.pwLive)}</span></div>
+  <div class="cg">${lato(p.casa, "ca", 1, "c")}<div class="cm"><span class="big liveN">${p.ptCasa}</span><i>-</i><span class="big liveN">${p.ptTr}</span></div>${lato(p.trasf, "tr", 2, "t")}</div>
+  <div class="qr">${(p.qTr || []).map((q, i) => `<span class="${p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${(p.qCasa || [])[i] ?? 0}-${q}</span>`).join("")}</div>
+  <div class="bar" style="margin:6px 0 2px"><div style="width:${(p.pwLive * 100).toFixed(0)}%;background:${cc}"></div><div style="flex:1;background:${ct}"></div></div>
+  <div class="riga s" style="margin:0 0 6px"><span>1 ${esc(p.casa)} ${pct(p.pwLive)}</span><span>vittoria adesso</span><span>${esc(p.trasf)} ${pct(1 - p.pwLive)} 2</span></div>
   <span class="chip">Totale ora ${p.ptCasa + p.ptTr}</span><span class="chip">Finale stimato ${p.proiTot.toFixed(0)}</span>${p.mercato ? `<span class="chip" style="color:${AM}">Bookmaker ${p.mercato.linea}: over ${pct(p.mercato.pMk)} (${p.mercato.minuti} min fa)</span><span class="chip" style="color:${colProb(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}">Nostra stima: ${p.mercato.pNostra >= 0.5 ? "over" : "under"} ${pct(Math.max(p.mercato.pNostra, 1 - p.mercato.pNostra))}</span>` : ""}</div>`;
 }
 function rigaSegnale(x) {
