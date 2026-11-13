@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "52";
+const VERSIONE = "53";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -76,7 +76,7 @@ function perGiornata(voci, disegna) {
     return `<details class="dt giorno"${i === 0 ? " open" : ""}><summary><span style="text-transform:capitalize">${esc(nomeGiorno(d))}</span><span style="color:${col};margin-left:auto">${ch.length ? `${ok} su ${ch.length} · ${Math.round(ok / ch.length * 100)}%` : `${l.length} in attesa`}</span></summary>${l.map(disegna).join("")}</details>`;
   }).join("");
 }
-const segStorico = (att) => `<div class="seg"><a href="#/storico"${att === "s" ? ' class="on"' : ""}>Storico</a><a href="#/esiti"${att === "e" ? ' class="on"' : ""}>Esiti per giorno</a><a href="#/registro"${att === "r" ? ' class="on"' : ""}>Il mio registro</a></div>`;
+const segStorico = (att) => `<div class="seg">${[["c", "conto", "Conto"], ["r", "registro", "Registro"], ["s", "storico", "Modello"], ["e", "esiti", "Esiti"]].map(([k, h, n]) => `<a href="#/${h}"${att === k ? ' class="on"' : ""}>${n}</a>`).join("")}</div>`;
 const tabelliniCache = {};
 // elenco delle partite finite toccabili: ognuna apre il suo tabellino
 function riquadroTabellini(righe) {
@@ -506,8 +506,44 @@ async function aggiornaRegistro(reg = ls.get("registro", [])) {
   } finally { aggiornandoReg = false; }
   return reg;
 }
+// ---------- IL MIO CONTO: ricariche, giocate e risultato mese per mese
+const nomeMese = (ym) => { const d = new Date(ym + "-15T12:00:00"); const t = d.toLocaleDateString("it-IT", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
+const spostaMese = (ym, n) => { const d = new Date(ym + "-15T12:00:00"); d.setMonth(d.getMonth() + n); return d.toISOString().slice(0, 7); };
+const euro = (v) => v.toFixed(2).replace(".", ",") + " €";
+async function vistaConto() {
+  APP.innerHTML = topBar() + segStorico("c") + skel();
+  const reg = await aggiornaRegistro(ls.get("registro", []));
+  const mov = ls.get("mov", []), oggiYM = new Date().toISOString().slice(0, 7); let ym = ls.get("contoMese", oggiYM);
+  const incasso = (r) => r.esito === 1 ? r.puntata * r.quota : 0;
+  // saldo da sempre: ricariche - prelievi - puntate + vincite
+  const dep = mov.filter((m) => m.tipo === "dep").reduce((a, m) => a + m.importo, 0), pre = mov.filter((m) => m.tipo === "prel").reduce((a, m) => a + m.importo, 0);
+  const saldo = dep - pre - reg.reduce((a, r) => a + (+r.puntata || 0), 0) + reg.reduce((a, r) => a + incasso(r), 0);
+  const disegna = () => {
+    ls.set("contoMese", ym);
+    const mr = reg.filter((r) => String(r.data).slice(0, 7) === ym), mm = mov.filter((m) => String(m.data).slice(0, 7) === ym);
+    const dM = mm.filter((m) => m.tipo === "dep").reduce((a, m) => a + m.importo, 0), pM = mm.filter((m) => m.tipo === "prel").reduce((a, m) => a + m.importo, 0);
+    const chiuse = mr.filter((r) => r.esito === 0 || r.esito === 1), vinte = chiuse.filter((r) => r.esito === 1), aperte = mr.filter((r) => r.esito == null);
+    const puntato = chiuse.reduce((a, r) => a + r.puntata, 0), incassato = chiuse.reduce((a, r) => a + incasso(r), 0), netto = incassato - puntato, roi = puntato ? netto / puntato * 100 : 0;
+    const col = netto >= 0 ? GR : RD;
+    let h = topBar() + segStorico("c");
+    h += `<div class="card gm" style="--ca:${saldo >= 0 ? "#1c3a2a" : "#3a1c1c"};--cb:transparent"><div class="s">Saldo stimato del conto</div><div style="font-family:'Barlow Condensed',Inter,sans-serif;font-weight:700;font-size:46px;line-height:1.05;color:${saldo >= 0 ? "#fff" : RD}">${euro(saldo)}</div><div class="s">Ricariche meno prelievi, meno le puntate, più le vincite. Si aggiorna da solo con i tuoi esiti.</div></div>`;
+    h += `<div class="mese"><button class="chipbtn" data-ms="-1">‹</button><b>${nomeMese(ym)}</b><button class="chipbtn" data-ms="1"${ym >= oggiYM ? " disabled style=\"opacity:.35\"" : ""}>›</button></div>`;
+    h += `<div class="row3"><div class="tile"><b>${euro(dM)}</b><span>caricato${pM ? ` · prelevato ${euro(pM)}` : ""}</span></div><div class="tile"><b>${mr.length}</b><span>schedine giocate${aperte.length ? ` · ${aperte.length} aperte` : ""}</span></div><div class="tile"><b style="color:${chiuse.length ? col : "#fff"}">${chiuse.length ? (netto >= 0 ? "+" : "-") + euro(Math.abs(netto)) : "—"}</b><span>${chiuse.length ? `risultato · ROI ${roi >= 0 ? "+" : ""}${roi.toFixed(0)}%` : "nessuna chiusa"}</span></div></div>`;
+    if (chiuse.length) h += `<div class="cap" style="margin-top:8px">Puntato ${euro(puntato)} su ${chiuse.length} schedine chiuse, incassato ${euro(incassato)}. Vinte ${vinte.length} su ${chiuse.length} (${Math.round(vinte.length / chiuse.length * 100)}%).</div>`;
+    h += `<h2>Movimenti</h2><div class="card"><div class="grid2" style="align-items:center"><input class="linea" id="mImp" inputmode="decimal" placeholder="Importo in €"><div style="display:flex;gap:6px"><button class="btn" id="mDep" style="flex:1">Ricarica</button><button class="btn" id="mPre" style="flex:1">Prelievo</button></div></div>` +
+      (mm.length ? mm.map((m) => `<div class="riga rg"><span>${m.tipo === "dep" ? "Ricarica" : "Prelievo"} · ${esc(nomeGiorno(String(m.data).slice(0, 10)))}</span><span><b style="color:${m.tipo === "dep" ? GR : AM}">${m.tipo === "dep" ? "+" : "-"}${euro(m.importo)}</b> <button class="chipbtn" data-dm="${esc(m.id)}" style="padding:2px 9px;font-size:11px">Togli</button></span></div>`).join("") : `<div class="cap" style="margin:8px 0 0">Nessun movimento in questo mese. Scrivi quanto hai caricato sul conto di gioco: il saldo lo calcola l'app.</div>`) + `</div>`;
+    h += `<h2>Cosa hai giocato</h2>` + (mr.length ? perGiornata(mr.map((r) => ({ r })), ({ r }) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><b>${esc(r.nome)}</b><div class="s">quota ${r.quota} · ${euro(+r.puntata)}${r.esito === 1 ? ` · <b style="color:${GR}">vinta ${euro(incasso(r))}</b>` : r.esito === 0 ? ` · <b style="color:${RD}">persa</b>` : " · in corso"}</div></div></div><div class="s" style="line-height:1.4;margin-top:4px">${esc(r.testo || "")}</div>${dettaglioLegs(r)}</div>`) + `<div class="cap" style="text-align:center"><a href="#/registro" style="color:${OR}">Apri il registro per modificare o togliere una giocata</a></div>` : `<div class="vuoto">Nessuna schedina in questo mese. Quando ne giochi una dall'app, la trovi qui con quota, puntata e risultato.</div>`);
+    h += `<div class="cap" style="text-align:center;margin-top:14px"><a href="#/calcolatore" style="color:${OR}"><i class="ti ti-calculator"></i> Calcolatore</a> &nbsp;·&nbsp; <a href="#/impostazioni" style="color:${OR}"><i class="ti ti-settings"></i> Impostazioni</a> &nbsp;·&nbsp; <a href="#/diag" style="color:${OR}"><i class="ti ti-stethoscope"></i> Controllo dati</a></div>`;
+    APP.innerHTML = h;
+    APP.querySelectorAll("[data-ms]").forEach((b) => b.onclick = () => { if (b.disabled) return; ym = spostaMese(ym, +b.dataset.ms); disegna(); });
+    const aggiungi = (tipo) => { const v = parseFloat(String($("#mImp").value).replace(",", ".")); if (!(v > 0)) { $("#mImp").focus(); return; } const m = ls.get("mov", []); m.unshift({ id: "m" + Date.now(), data: new Date().toISOString().slice(0, 10), tipo, importo: v }); ls.set("mov", m); ym = oggiYM; vistaConto(); };
+    $("#mDep").onclick = () => aggiungi("dep"); $("#mPre").onclick = () => aggiungi("prel");
+    APP.querySelectorAll("[data-dm]").forEach((b) => b.onclick = () => { if (!b.dataset.s) { b.dataset.s = 1; b.textContent = "Sicuro?"; setTimeout(() => { if (b.isConnected) { delete b.dataset.s; b.textContent = "Togli"; } }, 3000); return; } ls.set("mov", ls.get("mov", []).filter((m) => m.id !== b.dataset.dm)); vistaConto(); });
+  };
+  disegna();
+}
 async function vistaRegistro() {
-  const back = `<a class="back" href="#/storico"><i class="ti ti-chevron-left"></i>Storico</a>`;
+  const back = topBar() + segStorico("r");
   APP.innerHTML = back + skel();
   let reg = ls.get("registro", []);
   reg = await aggiornaRegistro(reg);
@@ -1100,12 +1136,13 @@ let timer = null;
 function route(force) {
   clearTimeout(timer); barraMia();
   const hsh = location.hash.replace(/^#/, "") || "/";
-  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") || hsh.startsWith("/categoria") || hsh.startsWith("/mia") ? "consigli" : hsh.startsWith("/esiti") || hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") || hsh.startsWith("/impostazioni") ? "storico" : "partite";
+  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") || hsh.startsWith("/categoria") || hsh.startsWith("/mia") ? "consigli" : hsh.startsWith("/esiti") || hsh.startsWith("/storico") || hsh.startsWith("/conto") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") || hsh.startsWith("/impostazioni") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const cat = /^\/categoria\/(\d+)/.exec(hsh), m = /^\/partita\/(\d+)/.exec(hsh), gp = /^\/giocatore\/(\d+)/.exec(hsh);
   if (hsh.startsWith("/impostazioni")) vistaImpostazioni();
   else if (hsh.startsWith("/calcolatore")) vistaCalcolatore();
   else if (hsh.startsWith("/registro")) vistaRegistro();
+  else if (hsh.startsWith("/conto")) vistaConto();
   else if (gp) vistaGiocatore(gp[1]);
   else if (m) vistaStudio(m[1], force === true);
   else if (attivo === "live") vistaLive(true);
