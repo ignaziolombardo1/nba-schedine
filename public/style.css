@@ -206,3 +206,8 @@ details.pan{margin-top:4px}details.pan>summary{list-style:none;cursor:pointer;fo
 /* niente zoom: né pizzico, né doppio tocco, né ingrandimento quando si tocca un campo */
 html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%}
 input,select,textarea{font-size:16px!important}
+
+.star{background:none;border:0;color:#7d869a;font-size:20px;line-height:1;padding:4px 6px;margin-left:2px;font-family:inherit;vertical-align:middle}.star.on{color:#ffb020}
+.cl .star{flex:0 0 auto;font-size:18px;padding:2px 3px;margin:0}
+.cl{position:relative}.cl .star{position:absolute;top:-12px;left:-8px;font-size:17px;padding:4px 6px;background:rgba(4,6,10,.55);border-radius:10px}.cl.ca .star{left:auto;right:-8px}
+.cl .star{top:auto;bottom:-14px}

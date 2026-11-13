@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "47";
+const VERSIONE = "48";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -73,6 +73,17 @@ function riquadroTabellini(righe) {
   return `<h2>Tabellini delle partite</h2><div class="cap" style="margin-top:0">Tocca una partita per vedere formazioni, punti, rimbalzi e assist.</div>` + [...m].slice(0, 12).map(([id, n]) => `<div class="card riga" data-tab="${id}" style="cursor:pointer;padding:10px 12px"><b>${esc(n || "Partita")}</b><span class="s">Tabellino <i class="ti ti-chevron-down"></i></span></div><div class="tabl" id="tb${id}" hidden></div>`).join("");
 }
 document.addEventListener("click", async (e) => {
+  const fv = e.target.closest("[data-fav]");
+  if (fv) {
+    e.preventDefault(); e.stopPropagation();
+    const [t, id, nome, sq] = fv.dataset.fav.split("|"), P = pref();
+    if (t === "sq") P.sq = P.sq.includes(id) ? P.sq.filter((x) => x !== id) : [...P.sq, id];
+    else P.pl = P.pl.some((x) => x.pid === id) ? P.pl.filter((x) => x.pid !== id) : [...P.pl, { pid: id, nome, sq }];
+    ls.set("pref", P);
+    if ((location.hash || "#/") === "#/" && ultimoD) { clearTimeout(timer); const y = window.scrollY; disegnaPartite(ultimoD, true); window.scrollTo(0, y); }
+    else { const on = siSegue(t, id); fv.classList.toggle("on", on); fv.textContent = on ? "★" : "☆"; }
+    return;
+  }
   const tb = e.target.closest("[data-tab]");
   if (tb) {
     const id = tb.dataset.tab, box = document.getElementById("tb" + id), ch = tb.querySelector(".ti-chevron-down,.ti-chevron-up"); if (!box) return;
@@ -167,7 +178,7 @@ function schedaPartita(D, p, topPick, cliccabile) {
   if (topPick) chips += `<span class="chip" style="color:${GR}">${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
   if (cliccabile) {
-    const lato = (ab, ruolo) => `<div class="cl ${ruolo}">${logo(ab, 34)}<div class="tn">${esc(T(D, ab).b.length > 7 ? ab : T(D, ab).b)}</div></div>`;
+    const lato = (ab, ruolo) => `<div class="cl ${ruolo}">${logo(ab, 34)}<div class="tn">${esc(T(D, ab).b.length > 7 ? ab : T(D, ab).b)}</div>${stella("sq", ab)}</div>`;
     const mezzo = p.stato === "pre"
       ? `<div class="cm"><span class="w">${pct(1 - r.pw)}</span><i>-</i><span class="w">${pct(r.pw)}</span></div>`
       : `<div class="cm"><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="t">${p.ptTr ?? 0}</span><i>-</i><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="c">${p.ptCasa ?? 0}</span></div>`;
@@ -267,6 +278,19 @@ function riquadriConsigli(D) {
     return `<a class="card" href="#/categoria/${i}" style="padding:12px;display:block"><div class="s"><i class="ti ${ic}" style="color:var(--or)"></i> ${esc(t)}</div><div style="font-size:22px;font-weight:700;margin-top:2px">${l.length}</div><div class="s">migliore ${pct(l[0].prob)}</div></a>`;
   }).join("") + `</div>`;
 }
+// ---------- PREFERITI (squadre e giocatori seguiti, salvati sul telefono)
+const pref = () => { const v = ls.get("pref", null); return v && v.sq && v.pl ? v : { sq: [], pl: [] }; };
+const siSegue = (t, id) => pref()[t].some((x) => (t === "sq" ? x : x.pid) === id);
+const stella = (t, id, nome = "", sq = "") => { const on = siSegue(t, id); return `<button class="star${on ? " on" : ""}" data-fav="${t}|${esc(id)}|${esc(nome)}|${esc(sq)}" aria-label="${on ? "Non seguire più" : "Segui"}">${on ? "★" : "☆"}</button>`; };
+const partitaPreferita = (p) => { const P = pref(); return P.sq.includes(p.casa) || P.sq.includes(p.trasf) || P.pl.some((x) => x.sq === p.casa || x.sq === p.trasf); };
+function riquadroPreferiti(D) {
+  const P = pref(); if (!P.sq.length && !P.pl.length) return `<div class="cap" style="margin-top:0">Tocca la ☆ accanto a una squadra o a un giocatore per seguirlo: le sue partite salgono in alto.</div>`;
+  const righe = [];
+  for (const ab of P.sq) { const g = D.partite.find((p) => p.casa === ab || p.trasf === ab); righe.push(`<a class="riga rg" ${g ? `href="#/partita/${g.id}"` : ""} style="color:inherit"><div class="lg">${logo(ab, 24)}<b>${esc(T(D, ab).n)}</b></div><span class="s">${g ? (g.stato === "pre" ? esc(String(g.ora).slice(-5)) : g.stato === "in" ? esc(g.dettaglio) + " · " + g.ptTr + "-" + g.ptCasa : "Finale " + g.ptTr + "-" + g.ptCasa) : "non gioca"}</span></a>`); }
+  for (const f of P.pl) { let x = null, g = null; for (const q of D.partite) { const t = q.giocatori.find((y) => String(y.pid) === String(f.pid)); if (t) { x = t; g = q; break; } }
+    righe.push(`<a class="riga rg" ${x ? `href="#/giocatore/${esc(f.pid)}"` : ""} style="color:inherit"><div class="lg">${foto(f.pid, 24)}<b>${esc(f.nome)}</b></div><span class="s">${x ? `stima ${x.pts.v.toFixed(0)} pt · ${x.reb.v.toFixed(0)} rb · ${x.ast.v.toFixed(0)} as` : "non gioca"}</span></a>`); }
+  return `<div class="card"><div class="s" style="margin-bottom:4px">I tuoi preferiti oggi</div>${righe.join("")}</div>`;
+}
 let firmaHome = "", ultimoD = null;
 const firmaDati = (D) => D.partite.map((p) => p.id + p.stato + p.ptTr + p.ptCasa).join(",");
 function disegnaPartite(D, conPoll, daCache) {
@@ -277,8 +301,8 @@ function disegnaPartite(D, conPoll, daCache) {
   h += avvisiDati(D, daCache);
   h += hero(D);
   { const m = confrontoMercato(D); if (m) h += `<details class="dt"><summary>Confronto con i bookmaker</summary>${m}</details>`; }
-  if (D.partite.length) h += `<h2>Tutte le partite</h2>`;
-  h += D.partite.map((p) => schedaPartita(D, p, top(p.id), true)).join("");
+  if (D.partite.length) h += riquadroPreferiti(D) + `<h2>Tutte le partite</h2>`;
+  h += [...D.partite].sort((a, b) => partitaPreferita(b) - partitaPreferita(a)).map((p) => schedaPartita(D, p, top(p.id), true)).join("");
   if (D.ieri.length) {
     h += `<details class="dt"><summary>Risultati di ieri (${D.ieri.length})</summary>` + D.ieri.map((p) => `<div class="card"><div class="riga"><div class="lg">${logo(p.trasf, 28)}<b>${esc(p.trasf)}</b></div><b style="font-size:18px">${p.ptTr} - ${p.ptCasa}</b><div class="lg"><b>${esc(p.casa)}</b>${logo(p.casa, 28)}</div></div></div>`).join("") + `</details>`;
   }
@@ -493,7 +517,7 @@ async function vistaGiocatore(pid) {
   for (const g of D.partite) { const f = g.giocatori.find((q) => String(q.pid) === String(pid)); if (f) { x = f; p = g; break; } }
   if (!x) { APP.innerHTML = back + `<div class="vuoto">Giocatore non trovato per il giorno selezionato.</div>`; return; }
   const avv = x.sq === p.casa ? p.trasf : p.casa, dub = x.inf === "dubbio" ? `<span class="pill" style="color:${AM};margin-left:6px">Dubbio</span>` : "";
-  let h = back + `<div class="card gm" style="--ca:${T(D, x.sq).c};--cb:transparent"><div class="lg">${foto(x.pid, 64)}<div style="min-width:0"><div class="nome" style="font-size:26px">${esc(x.nome)}${dub}</div><div class="s">${logo(x.sq, 16)} ${esc(T(D, x.sq).n)} · contro ${esc(T(D, avv).b)} · ${esc(p.ora)}</div><div class="s">${Math.round(x.min)} minuti attesi${x.conForma ? " · con forma recente" : " · solo media stagione"}</div></div></div>${x.assenze ? `<div class="s" style="margin-top:8px;color:${AM}">Assenti in squadra: ${esc(x.assenze.join(", "))}. Una parte dei loro numeri passa a questo giocatore.</div>` : ""}</div>`;
+  let h = back + `<div class="card gm" style="--ca:${T(D, x.sq).c};--cb:transparent"><div class="lg">${foto(x.pid, 64)}<div style="min-width:0"><div class="nome" style="font-size:26px">${esc(x.nome)}${stella("pl", x.pid, x.nome, x.sq)}${dub}</div><div class="s">${logo(x.sq, 16)} ${esc(T(D, x.sq).n)} · contro ${esc(T(D, avv).b)} · ${esc(p.ora)}</div><div class="s">${Math.round(x.min)} minuti attesi${x.conForma ? " · con forma recente" : " · solo media stagione"}</div></div></div>${x.assenze ? `<div class="s" style="margin-top:8px;color:${AM}">Assenti in squadra: ${esc(x.assenze.join(", "))}. Una parte dei loro numeri passa a questo giocatore.</div>` : ""}</div>`;
   for (const [m, c] of Object.entries(MERC)) {
     const o = x[c.k], u = x.ult && x.ult[c.k];
     h += `<h2>${m}</h2><div class="card"><div class="row3"><div class="tile on"><b>${o.v.toFixed(1)}</b><span>stima per questa partita</span></div><div class="tile"><b>${o.media.toFixed(1)}</b><span>media stagione</span></div><div class="tile"><b>${u ? (u.reduce((a, b) => a + b, 0) / u.length).toFixed(1) : "–"}</b><span>ultime ${u ? u.length : 0}</span></div></div>`;
