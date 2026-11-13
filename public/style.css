@@ -211,3 +211,4 @@ input,select,textarea{font-size:16px!important}
 .cl .star{flex:0 0 auto;font-size:18px;padding:2px 3px;margin:0}
 .cl{position:relative}.cl .star{position:absolute;top:-12px;left:-8px;font-size:17px;padding:4px 6px;background:rgba(4,6,10,.55);border-radius:10px}.cl.ca .star{left:auto;right:-8px}
 .cl .star{top:auto;bottom:-14px}
+details.giorno>summary{display:flex;align-items:center;gap:8px}

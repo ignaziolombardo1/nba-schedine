@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "48";
+const VERSIONE = "49";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -64,6 +64,17 @@ function barraMia() {
   const L = miaLeggi(); if (location.hash.startsWith("#/mia")) { el.style.display = "none"; return; }
   const q = L.reduce((a, l) => a / Math.max(0.05, l.prob), 1);
   el.style.display = "flex"; el.innerHTML = L.length ? `<a href="#/mia" aria-label="La mia schedina: ${L.length} giocate, quota giusta ${q.toFixed(2)}"><i class="ti ti-ticket"></i><b>${L.length}</b></a>` : `<a href="#/mia" class="vuota" aria-label="Componi la tua schedina"><i class="ti ti-ticket"></i><b>Schedina</b></a>`;
+}
+// Raggruppa per giornata (la più recente aperta, le altre chiuse) con il conteggio di quelle centrate
+const nomeGiorno = (d) => { const x = new Date(d + "T12:00:00"); return isNaN(x) ? String(d || "Senza data") : x.toLocaleDateString("it-IT", { weekday: "short", day: "numeric", month: "long" }); };
+function perGiornata(voci, disegna) {
+  const m = new Map();
+  for (const v of voci) { const d = String(v.r.data || "").slice(0, 10) || "—"; if (!m.has(d)) m.set(d, []); m.get(d).push(v); }
+  return [...m].sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(([d, l], i) => {
+    const ch = l.filter((v) => v.r.esito === 0 || v.r.esito === 1), ok = ch.filter((v) => v.r.esito === 1).length;
+    const col = !ch.length ? MU : ok / ch.length >= 0.6 ? GR : ok / ch.length >= 0.4 ? AM : RD;
+    return `<details class="dt giorno"${i === 0 ? " open" : ""}><summary><span style="text-transform:capitalize">${esc(nomeGiorno(d))}</span><span style="color:${col};margin-left:auto">${ch.length ? `${ok} su ${ch.length} · ${Math.round(ok / ch.length * 100)}%` : `${l.length} in attesa`}</span></summary>${l.map(disegna).join("")}</details>`;
+  }).join("");
 }
 const tabelliniCache = {};
 // elenco delle partite finite toccabili: ognuna apre il suo tabellino
@@ -490,7 +501,7 @@ async function vistaRegistro() {
   else {
     h += `<div class="card riga" style="gap:14px;justify-content:flex-start"><div><div class="s">Risultato delle giocate chiuse</div><div style="font-family:'Barlow Condensed',Inter,sans-serif;font-size:36px;font-weight:700;color:${prof >= 0 ? GR : RD}">${chiuse.length ? eur(prof) : "–"}</div><div class="s">${vinte.length} centrate su ${chiuse.length}${puntato ? ` · rendimento ${(prof / puntato * 100).toFixed(0)}% su ${puntato.toFixed(2).replace(".", ",")} € puntati` : ""} · ${reg.filter((r) => r.esito == null).length} in attesa</div></div></div>`;
     h += statisticheRegistro(chiuse);
-    h += reg.map((r, i) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div>${dettaglioLegs(r)}${r.nota ? `<div class="s" style="color:${AM}">${esc(r.nota)}</div>` : ""}<div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div>${r.esito == null ? `<div style="margin-top:6px"><button class="chipbtn" data-es="${i}|1" style="padding:3px 10px;font-size:11px">Vinta</button> <button class="chipbtn" data-es="${i}|0" style="padding:3px 10px;font-size:11px">Persa</button></div>` : ""}</div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div><div class="riga" style="margin-top:8px;gap:8px;justify-content:flex-start"><span class="s">Quota di chiusura</span><input class="linea" inputmode="decimal" data-cl="${i}" value="${r.chiusura || ""}" placeholder="es. 1.75" style="margin:0;width:90px;padding:4px 8px">${r.chiusura > 1 ? (() => { const c = r.quota / r.chiusura - 1; return `<b style="color:${c >= 0 ? GR : RD}">CLV ${c >= 0 ? "+" : ""}${(c * 100).toFixed(1)}%</b>`; })() : ""}</div></div>`).join("");
+    h += perGiornata(reg.map((r, i) => ({ r, i })), ({ r, i }) => `<div class="card" style="padding:10px 12px"><div class="riga" style="align-items:flex-start;gap:10px"><div style="min-width:0"><div style="font-weight:600">${esc(r.nome)}</div><div class="s" style="line-height:1.4">${esc(r.testo)}</div>${dettaglioLegs(r)}${r.nota ? `<div class="s" style="color:${AM}">${esc(r.nota)}</div>` : ""}<div class="s">${esc(r.data)} · quota ${r.quota} · ${r.puntata} € · prevista ${pct(r.prob)}</div>${r.esito == null ? `<div style="margin-top:6px"><button class="chipbtn" data-es="${i}|1" style="padding:3px 10px;font-size:11px">Vinta</button> <button class="chipbtn" data-es="${i}|0" style="padding:3px 10px;font-size:11px">Persa</button></div>` : ""}</div><div style="text-align:right"><b style="color:${r.esito === 1 ? GR : r.esito === 0 ? RD : MU}">${r.esito === 1 ? eur(r.puntata * (r.quota - 1)) : r.esito === 0 ? eur(-r.puntata) : "in attesa"}</b><div><button class="chipbtn" data-del="${i}" style="padding:3px 10px;font-size:11px;margin-top:6px">Elimina</button></div></div></div><div class="riga" style="margin-top:8px;gap:8px;justify-content:flex-start"><span class="s">Quota di chiusura</span><input class="linea" inputmode="decimal" data-cl="${i}" value="${r.chiusura || ""}" placeholder="es. 1.75" style="margin:0;width:90px;padding:4px 8px">${r.chiusura > 1 ? (() => { const c = r.quota / r.chiusura - 1; return `<b style="color:${c >= 0 ? GR : RD}">CLV ${c >= 0 ? "+" : ""}${(c * 100).toFixed(1)}%</b>`; })() : ""}</div></div>`).join("");
   }
   if (reg.length) h += `<div class="grid2" style="margin-top:6px"><button class="btn" id="csv" style="margin:0">Scarica CSV</button><button class="btn" id="bak" style="margin:0">Copia backup</button></div>`;
   h += `<button class="btn" id="rip" style="margin:8px 0 0">Ripristina da backup incollato</button><div class="cap">Il registro vive solo su questo telefono: ogni tanto copia il backup e conservalo (ad esempio nelle note).</div>`;
@@ -1009,7 +1020,7 @@ async function vistaStorico() {
       const sub = (l) => [l.filter((r) => r.esito === 1).length, l.length, l.reduce((a, r) => a + r.prob, 0) / l.length];
       h += `<h2>Per categoria</h2><div class="grid2">${SC.map(([t, , tipi]) => { const l = val.filter((r) => tipi.includes(r.tipo)); return l.length ? barraPerc(t, ...sub(l)) : ""; }).join("")}</div>`;
       h += `<h2>Calibrazione</h2><div class="grid2">${[[0.7, 0.75, "70-75%"], [0.75, 0.8, "75-80%"], [0.8, 0.85, "80-85%"], [0.85, 1.01, "85% e oltre"]].map(([a, b, n]) => { const l = val.filter((r) => r.prob >= a && r.prob < b); return l.length ? barraPerc(n, ...sub(l)) : ""; }).join("")}</div><div class="cap">Se in una fascia la percentuale reale è molto più bassa di quella prevista, il modello è troppo ottimista lì.</div>`;
-      h += `<h2>Ultimi esiti</h2>` + val.slice(0, 30).map(rigaEsito).join("");
+      h += `<h2>Esiti per giornata</h2>` + perGiornata(val.map((r) => ({ r })), ({ r }) => rigaEsito(r));
     }
   }
   h += riquadroTabellini((S.righe || []).filter((r) => r.esito === 0 || r.esito === 1).slice(0, 80)) + precisioneModello(S) + schedineStorico(S);
