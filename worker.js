@@ -446,10 +446,10 @@ export default {
       if (p === "/api/giorno") return J(await apiGiorno(env, ctx, off, data), 45);
       if (p === "/api/tabellino") {
         const id = url.searchParams.get("id") || ""; if (!/^\d+$/.test(id)) return ERR("partita non valida", 400);
-        const box = await caricaBoxscore(id, 600);
+        const [box, es] = await Promise.all([caricaBoxscore(id, 600), caricaEsitoPartita(id, 600).catch(() => ({}))]);
         const gioc = Object.values(box).filter((b) => b.tit || (b.min != null && b.min > 0)).sort((a, b) => (b.tit - a.tit) || (b.pts || 0) - (a.pts || 0))
           .map((b) => ({ nome: b.nome, sq: b.sq, pts: b.pts, reb: b.reb, ast: b.ast, min: b.min, tit: !!b.tit, stl: b.stl, blk: b.blk, to: b.to, pf: b.pf, pm: b.pm, tre: b.tre, fg: b.fg, pid: b.pid }));
-        return J({ giocatori: gioc }, 120);
+        return J({ giocatori: gioc, casa: es.casa || null, trasf: es.trasf || null, ptCasa: es.ptCasa ?? null, ptTr: es.ptTr ?? null }, 120);
       }
       if (p === "/api/esiti") return J(await apiEsiti(off, data), 120);
       if (p === "/api/storico") return J(await apiStorico(env));

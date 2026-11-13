@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "46";
+const VERSIONE = "47";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -66,6 +66,12 @@ function barraMia() {
   el.style.display = "flex"; el.innerHTML = L.length ? `<a href="#/mia" aria-label="La mia schedina: ${L.length} giocate, quota giusta ${q.toFixed(2)}"><i class="ti ti-ticket"></i><b>${L.length}</b></a>` : `<a href="#/mia" class="vuota" aria-label="Componi la tua schedina"><i class="ti ti-ticket"></i><b>Schedina</b></a>`;
 }
 const tabelliniCache = {};
+// elenco delle partite finite toccabili: ognuna apre il suo tabellino
+function riquadroTabellini(righe) {
+  const m = new Map(); for (const r of righe) { const id = String(r.g ?? r.event_id ?? ""); if (/^\d+$/.test(id) && r.tipo !== "Schedina" && !m.has(id)) m.set(id, r.partita); }
+  if (!m.size) return "";
+  return `<h2>Tabellini delle partite</h2><div class="cap" style="margin-top:0">Tocca una partita per vedere formazioni, punti, rimbalzi e assist.</div>` + [...m].slice(0, 12).map(([id, n]) => `<div class="card riga" data-tab="${id}" style="cursor:pointer;padding:10px 12px"><b>${esc(n || "Partita")}</b><span class="s">Tabellino <i class="ti ti-chevron-down"></i></span></div><div class="tabl" id="tb${id}" hidden></div>`).join("");
+}
 document.addEventListener("click", async (e) => {
   const tb = e.target.closest("[data-tab]");
   if (tb) {
@@ -76,7 +82,7 @@ document.addEventListener("click", async (e) => {
       box.innerHTML = skel();
       try {
         const R = await api("/api/tabellino?id=" + id, 120);
-        tabelliniCache[id] = formazioniLive(ultimoD, { giocatori: R.giocatori || [], casa: tb.dataset.casa, trasf: tb.dataset.trasf }) + `<a class="btn" style="display:block;text-align:center" href="#/partita/${id}">Apri lo studio di questa partita</a>`;
+        tabelliniCache[id] = formazioniLive(ultimoD || { squadre: {} }, { giocatori: R.giocatori || [], casa: tb.dataset.casa || R.casa, trasf: tb.dataset.trasf || R.trasf }) + `<a class="btn" style="display:block;text-align:center" href="#/partita/${id}">Apri lo studio di questa partita</a>`;
       } catch { box.innerHTML = `<div class="vuoto">Tabellino non disponibile, riprova tra poco.</div>`; return; }
     }
     box.innerHTML = tabelliniCache[id]; return;
@@ -944,7 +950,7 @@ function rigaEsito(r) {
 async function vistaEsiti() {
   APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
   let E; try { E = await api("/api/esiti?" + qs(), 60000); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
-  const ris = E.risultati, val = ris.filter((x) => x.esito !== 2);
+  const ris = E.risultati, val = ris.filter((x) => x.esito !== 2); ultimoD = { squadre: E.squadre || {} };
   let h = topBar() + giorniChips();
   if (!val.length) h += `<div class="vuoto">Nessuna partita finita da verificare per questo giorno. Torna a partite concluse.</div>`;
   else {
@@ -959,7 +965,7 @@ async function vistaEsiti() {
     for (const [t, c] of [["Azzeccati", 1], ["Sbagliati", 0]]) { const l = val.filter((x) => x.esito === c); if (l.length) h += `<h2>${t} (${l.length})</h2>` + l.map(rigaEsito).join(""); }
     const nulli = ris.filter((x) => x.esito === 2);
     if (nulli.length) h += `<details><summary>Non validi (${nulli.length})</summary>${nulli.map(rigaEsito).join("")}</details>`;
-    h += `<div class="cap">I consigli sono ricalcolati con le statistiche attuali. Per il registro vero guarda «Storico».</div>`;
+    h += riquadroTabellini(ris) + `<div class="cap">I consigli sono ricalcolati con le statistiche attuali. Per il registro vero guarda «Storico».</div>`;
   }
   APP.innerHTML = h; bindGiorni();
   APP.querySelectorAll("[data-ec]").forEach((el) => el.onclick = () => { const i = +el.dataset.ec; ls.set("esCat", ls.get("esCat", null) === i ? null : i); vistaEsiti(); });
@@ -982,7 +988,7 @@ async function vistaStorico() {
       h += `<h2>Ultimi esiti</h2>` + val.slice(0, 30).map(rigaEsito).join("");
     }
   }
-  h += precisioneModello(S) + schedineStorico(S);
+  h += riquadroTabellini((S.righe || []).filter((r) => r.esito === 0 || r.esito === 1).slice(0, 80)) + precisioneModello(S) + schedineStorico(S);
   h += `<div class="cap" style="text-align:center;margin-top:14px"><a href="#/registro" style="color:${OR}"><i class="ti ti-notebook"></i> Il mio registro</a> &nbsp;·&nbsp; <a href="#/calcolatore" style="color:${OR}"><i class="ti ti-calculator"></i> Calcolatore</a> &nbsp;·&nbsp; <a href="#/impostazioni" style="color:${OR}"><i class="ti ti-settings"></i> Impostazioni</a></div>`;
   h += `<div class="cap" style="text-align:center;margin-top:18px"><a href="#/diag" style="color:${OR}"><i class="ti ti-stethoscope"></i> Controllo dei dati</a></div>`;
   APP.innerHTML = h;
