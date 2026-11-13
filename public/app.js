@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "56";
+const VERSIONE = "57";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -602,6 +602,10 @@ async function vistaGiocatore(pid) {
 function probCustom(g, c) {
   const over = (v, sd, t) => 1 - phi((t - v) / sd);
   let v, sd, nome = "", pid = null, sq = null, k = c.k;
+  if (k === "win") {
+    const casa = c.sq === g.casa, p = casa ? g.r.pw : 1 - g.r.pw, nm = T(window.__D, c.sq).b, m = casa ? g.r.margine : -g.r.margine;
+    return { id: "mio_" + Date.now() + Math.random().toString(36).slice(2, 6), chiave: null, testo: `${casa ? "1" : "2"} · ${nm} vince`, prob: p, partita: `${g.trasf} @ ${g.casa}`, g: g.id, pid: null, sq: c.sq, k: "win", dir: "over", soglia: null, nome: null, mia: true, stima: m };
+  }
   if (k === "tot") { v = g.r.totale; sd = 17; nome = "Totale"; }
   else if (k === "sq") { v = c.sq === g.casa ? g.r.ptCasa : g.r.ptTr; sd = 12; sq = c.sq; nome = T(window.__D, c.sq).b; }
   else { const pl = g.giocatori.find((x) => x.pid === c.pid); if (!pl) return null; const o = pl[k]; v = o.v; sd = o.sd; nome = pl.nome; pid = pl.pid; sq = pl.sq; if (pl.inf === "dubbio") c.pg = (pl[k].pg ?? 0.5); }
@@ -662,21 +666,21 @@ async function vistaMia() {
       const C = ls.get("miaForm", { g: "", k: "pts", pid: "", sq: "", dir: "over", soglia: "" }), g = gare.find((x) => x.id === C.g) || gare[0], pl = g.giocatori.slice().sort((a, b) => b.pts.v - a.pts.v);
       const sel = (id, opts, val) => `<select class="linea" id="${id}" style="margin:0">${opts.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(val) ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
       h += `<div class="cap" style="margin-top:0">Scrivi la linea che vedi sul tuo bookmaker: l'app calcola la probabilità.</div><div class="card">${sel("cg", gare.map((x) => [x.id, `${x.trasf} @ ${x.casa} · ${String(x.ora).slice(-5)}`]), g.id)}
-      <div class="grid2" style="margin-top:8px">${sel("ck", [["pts", "Punti giocatore"], ["reb", "Rimbalzi giocatore"], ["ast", "Assist giocatore"], ["tot", "Totale partita"], ["sq", "Punti di una squadra"]], C.k)}${sel("cd", [["over", "Over"], ["under", "Under"]], C.dir)}</div>
-      ${["pts", "reb", "ast"].includes(C.k) ? `<div style="margin-top:8px">${sel("cp", pl.map((x) => [x.pid, `${x.nome} (${x.sq})`]), C.pid || (pl[0] && pl[0].pid))}</div>` : C.k === "sq" ? `<div style="margin-top:8px">${sel("cs", [[g.trasf, g.trasf], [g.casa, g.casa]], C.sq || g.trasf)}</div>` : ""}
-      <input class="linea" inputmode="decimal" id="cl" placeholder="Linea del bookmaker (es. 19.5)" value="${esc(C.soglia)}" style="margin:8px 0 0"><div id="cprob"></div><button class="btn" id="cadd" style="margin:8px 0 0">Aggiungi alla schedina</button></div>`;
+      <div class="grid2" style="margin-top:8px">${sel("ck", [["pts", "Punti giocatore"], ["reb", "Rimbalzi giocatore"], ["ast", "Assist giocatore"], ["tot", "Totale partita"], ["sq", "Punti di una squadra"], ["win", "Vincente (1 / 2)"]], C.k)}${C.k === "win" ? "" : sel("cd", [["over", "Over"], ["under", "Under"]], C.dir)}</div>
+      ${["pts", "reb", "ast"].includes(C.k) ? `<div style="margin-top:8px">${sel("cp", pl.map((x) => [x.pid, `${x.nome} (${x.sq})`]), C.pid || (pl[0] && pl[0].pid))}</div>` : C.k === "sq" ? `<div style="margin-top:8px">${sel("cs", [[g.trasf, g.trasf], [g.casa, g.casa]], C.sq || g.trasf)}</div>` : C.k === "win" ? `<div style="margin-top:8px">${sel("cs", [[g.casa, `1 · ${T(window.__D, g.casa).b} (casa)`], [g.trasf, `2 · ${T(window.__D, g.trasf).b} (trasferta)`]], C.sq || g.casa)}</div>` : ""}
+      ${C.k === "win" ? `<input type="hidden" id="cl" value="1">` : `<input class="linea" inputmode="decimal" id="cl" placeholder="Linea del bookmaker (es. 19.5)" value="${esc(C.soglia)}" style="margin:8px 0 0">`}<div id="cprob"></div><button class="btn" id="cadd" style="margin:8px 0 0">Aggiungi alla schedina</button></div>`;
     }
     el.innerHTML = h;
     el.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => { ls.set("miaTab", b.dataset.tab); lista(); });
     el.querySelectorAll("[data-cat]").forEach((b) => b.onclick = () => { ls.set("miaCat", +b.dataset.cat); lista(); });
     if (tab === "s" && gare.length) {
-      const leggi = () => ({ g: $("#cg").value, k: $("#ck").value, dir: $("#cd").value, pid: $("#cp") ? $("#cp").value : "", sq: $("#cs") ? $("#cs").value : "", soglia: parseFloat(String($("#cl").value).replace(",", ".")) });
-      const salvaC = () => { const c = leggi(); ls.set("miaForm", { ...c, soglia: $("#cl").value }); return c; };
-      const mostra = () => { const c = salvaC(), g = gare.find((x) => x.id === c.g); if (!g || !(c.soglia > 0)) { $("#cprob").innerHTML = ""; return null; } const r = probCustom(g, c); if (!r) { $("#cprob").innerHTML = ""; return null; } $("#cprob").innerHTML = `<div class="s" style="margin-top:8px">Per il modello: <b style="color:${colProb(r.prob)}">${pct(r.prob)}</b> · stima ${r.stima.toFixed(1)}</div>`; return r; };
+      const leggi = () => ({ g: $("#cg").value, k: $("#ck").value, dir: $("#cd") ? $("#cd").value : "over", pid: $("#cp") ? $("#cp").value : "", sq: $("#cs") ? $("#cs").value : "", soglia: parseFloat(String($("#cl").value).replace(",", ".")) });
+      const salvaC = () => { const c = leggi(); ls.set("miaForm", { ...c, soglia: c.k === "win" ? "" : $("#cl").value }); return c; };
+      const mostra = () => { const c = salvaC(), g = gare.find((x) => x.id === c.g); if (!g || !(c.soglia > 0)) { $("#cprob").innerHTML = ""; return null; } const r = probCustom(g, c); if (!r) { $("#cprob").innerHTML = ""; return null; } $("#cprob").innerHTML = `<div class="s" style="margin-top:8px">Per il modello: <b style="color:${colProb(r.prob)}">${pct(r.prob)}</b>${r.k === "win" ? ` · scarto stimato ${r.stima >= 0 ? "+" : ""}${r.stima.toFixed(1)}` : ` · stima ${r.stima.toFixed(1)}`}</div>`; return r; };
       for (const id of ["cg", "ck"]) $("#" + id).onchange = () => { salvaC(); lista(); };
       for (const id of ["cd", "cp", "cs"]) if ($("#" + id)) $("#" + id).onchange = () => { salvaC(); mostra(); };
       $("#cl").oninput = mostra; mostra();
-      $("#cadd").onclick = () => { const r = mostra(); if (!r) { $("#cadd").textContent = "Scrivi la linea del bookmaker"; return; } const l = miaLeggi(); l.push(r); ls.set("mia", l); barraMia(); riepilogo(); $("#cl").value = ""; ls.set("miaForm", { ...leggi(), soglia: "" }); mostra(); };
+      $("#cadd").onclick = () => { const r = mostra(); if (!r) { $("#cadd").textContent = "Scrivi la linea del bookmaker"; return; } const l = miaLeggi(); l.push(r); ls.set("mia", l); barraMia(); riepilogo(); if ($("#cl").type !== "hidden") $("#cl").value = ""; ls.set("miaForm", { ...leggi(), soglia: "" }); mostra(); };
     }
   };
   window.__miaAgg = () => { riepilogo(); };
