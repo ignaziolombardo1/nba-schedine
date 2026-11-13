@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "49";
+const VERSIONE = "50";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -76,6 +76,7 @@ function perGiornata(voci, disegna) {
     return `<details class="dt giorno"${i === 0 ? " open" : ""}><summary><span style="text-transform:capitalize">${esc(nomeGiorno(d))}</span><span style="color:${col};margin-left:auto">${ch.length ? `${ok} su ${ch.length} · ${Math.round(ok / ch.length * 100)}%` : `${l.length} in attesa`}</span></summary>${l.map(disegna).join("")}</details>`;
   }).join("");
 }
+const segStorico = (att) => `<div class="seg"><a href="#/storico"${att === "s" ? ' class="on"' : ""}>Storico</a><a href="#/esiti"${att === "e" ? ' class="on"' : ""}>Esiti per giorno</a><a href="#/registro"${att === "r" ? ' class="on"' : ""}>Il mio registro</a></div>`;
 const tabelliniCache = {};
 // elenco delle partite finite toccabili: ognuna apre il suo tabellino
 function riquadroTabellini(righe) {
@@ -240,6 +241,15 @@ function avvisiDati(D, daCache) {
   for (const x of D.salute || []) h += `<div class="avv ${x.liv === "err" ? "err" : "warn"}"><i class="ti ti-alert-triangle"></i> ${esc(x.t)} <a href="#/diag" style="text-decoration:underline">Dettagli</a></div>`;
   return h;
 }
+// la giocata più probabile tra quelle delle partite ancora da giocare (o la migliore in assoluto)
+function giocataDelGiorno(D) {
+  const n = D.partite.length; if (!n) return "";
+  const live = D.partite.filter((p) => p.stato === "in").length, fin = D.partite.filter((p) => p.stato === "post").length, pre = n - live - fin;
+  const cand = D.picks.filter((x) => D.partite.find((p) => p.id === x.g && p.stato === "pre")), top = [...(cand.length ? cand : [])].sort((a, b) => b.prob - a.prob)[0];
+  const riep = `<div class="riep">${n} ${n === 1 ? "partita" : "partite"}${live ? ` · <span style="color:${OR}">${live} in corso</span>` : ""}${pre ? ` · ${pre} da giocare` : ""}${fin ? ` · ${fin} finite` : ""}</div>`;
+  if (!top) return riep;
+  return riep + `<a class="gdg" href="#/partita/${top.g}"><div class="gt">Giocata del giorno</div><div class="gx">${esc(top.testo)}</div><div class="gp"><b>${Math.round(top.prob * 100)}%</b><span class="s">${esc(top.partita)}</span></div><div class="gb"><i style="width:${Math.round(top.prob * 100)}%"></i></div></a>`;
+}
 function hero(D) {
   const n = D.partite.length; if (!n) return "";
   const live = D.partite.filter((p) => p.stato === "in").length, fin = D.partite.filter((p) => p.stato === "post").length, pre = n - live - fin;
@@ -310,10 +320,13 @@ function disegnaPartite(D, conPoll, daCache) {
   let h = topBar(D) + giorniChips();
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
   h += avvisiDati(D, daCache);
-  h += hero(D);
+  h += giocataDelGiorno(D);
   { const m = confrontoMercato(D); if (m) h += `<details class="dt"><summary>Confronto con i bookmaker</summary>${m}</details>`; }
-  if (D.partite.length) h += riquadroPreferiti(D) + `<h2>Tutte le partite</h2>`;
-  h += [...D.partite].sort((a, b) => partitaPreferita(b) - partitaPreferita(a)).map((p) => schedaPartita(D, p, top(p.id), true)).join("");
+  if (D.partite.length) h += riquadroPreferiti(D);
+  for (const [t, st] of [["In corso", "in"], ["Da giocare", "pre"], ["Finite", "post"]]) {
+    const l = D.partite.filter((p) => p.stato === st).sort((a, b) => partitaPreferita(b) - partitaPreferita(a)); if (!l.length) continue;
+    h += `<h2 class="sez${st === "in" ? " live" : ""}">${st === "in" ? '<span class="dot"></span>' : ""}${t}<span class="n">${l.length}</span></h2>` + l.map((p) => schedaPartita(D, p, top(p.id), true)).join("");
+  }
   if (D.ieri.length) {
     h += `<details class="dt"><summary>Risultati di ieri (${D.ieri.length})</summary>` + D.ieri.map((p) => `<div class="card"><div class="riga"><div class="lg">${logo(p.trasf, 28)}<b>${esc(p.trasf)}</b></div><b style="font-size:18px">${p.ptTr} - ${p.ptCasa}</b><div class="lg"><b>${esc(p.casa)}</b>${logo(p.casa, 28)}</div></div></div>`).join("") + `</details>`;
   }
@@ -983,10 +996,48 @@ function rigaEsito(r) {
   return `<div class="card riga" style="padding:10px 12px;gap:10px;justify-content:flex-start"><div style="width:28px;height:28px;border-radius:50%;background:${c}22;color:${c};display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">${s}</div><div style="min-width:0;flex:1"><div style="font-weight:500">${esc(r.testo)}</div><div class="s">${esc(r.partita)} · ${esc(r.dettaglio || "")}</div></div><div class="s">${pct(r.prob)}</div></div>`;
 }
 async function vistaEsiti() {
-  APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni();
-  let E; try { E = await api("/api/esiti?" + qs(), 60000); } catch (e) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); return; }
+  APP.innerHTML = topBar() + segStorico("e") + giorniChips() + skel(); bindGiorni();
+  let E; try { E = await api("/api/esiti?" + qs(), 60000); } catch (e) { APP.innerHTML = topBar() + segStorico("e") + giorniChips() + errBox(e); bindGiorni(); return; }
   const ris = E.risultati, val = ris.filter((x) => x.esito !== 2); ultimoD = { squadre: E.squadre || {} };
-  let h = topBar() + giorniChips();
+  let h = topBar() + segStorico("e") + giorniChips();
+  if (!val.length) h += `<div class="vuoto">Nessuna partita finita da verificare per questo giorno. Torna a partite concluse.</div>`;
+  else {
+    const ok = val.filter((x) => x.esito === 1).length, p = ok / val.length * 100;
+    h += `<div class="card riga" style="gap:14px;justify-content:flex-start">${anello(p, p >= 60 ? GR : OR, 76)}<div><div class="s">Consigli delle partite finite</div><div style="font-size:20px;font-weight:600">${ok} su ${val.length} azzeccati</div><div class="s">${ris.length - val.length} non validi (giocatore fermo o dato mancante)</div></div></div>`;
+    const cat = ls.get("esCat", null), sel = cat != null ? SC[cat] : null;
+    h += `<div class="grid2">${SC.map(([t, , tipi], i) => { const v = val.filter((x) => tipi.includes(x.tipo)); return v.length ? `<div data-ec="${i}" style="cursor:pointer;${cat === i ? "outline:1px solid " + OR + ";border-radius:16px" : ""}">${barraPerc(t, v.filter((x) => x.esito === 1).length, v.length)}</div>` : ""; }).join("")}</div>`;
+    if (sel) {
+      const l = val.filter((x) => sel[2].includes(x.tipo)).sort((a, b) => b.prob - a.prob);
+      h += `<h2>${esc(sel[0])} (${l.length})</h2><div class="cap" style="margin-top:0">Tutte le giocate della categoria, dalla più probabile. <a href="#" id="tutte" style="color:${OR}">Mostra tutto</a></div>` + l.map(rigaEsito).join("");
+    } else
+    for (const [t, c] of [["Azzeccati", 1], ["Sbagliati", 0]]) { const l = val.filter((x) => x.esito === c); if (l.length) h += `<h2>${t} (${l.length})</h2>` + l.map(rigaEsito).join(""); }
+    const nulli = ris.filter((x) => x.esito === 2);
+    if (nulli.length) h += `<details><summary>Non validi (${nulli.length})</summary>${nulli.map(rigaEsito).join("")}</details>`;
+    h += riquadroTabellini(ris) + `<div class="cap">I consigli sono ricalcolati con le statistiche attuali. Per il registro vero guarda «Storico».</div>`;
+  }
+  APP.innerHTML = h; bindGiorni();
+  APP.querySelectorAll("[data-ec]").forEach((el) => el.onclick = () => { const i = +el.dataset.ec; ls.set("esCat", ls.get("esCat", null) === i ? null : i); vistaEsiti(); });
+  const tt = $("#tutte"); if (tt) tt.onclick = (e) => { e.preventDefault(); ls.set("esCat", null); vistaEsiti(); };
+}
+function schedineStorico(S) {
+  const l = (S.schedine || []); if (!l.length) return "";
+  const ris = l.filter((r) => r.esito === 0 || r.esito === 1), att = l.length - ris.length;
+  const per = {}; for (const r of ris) { const c = (per[r.squadra] ||= { n: 0, ok: 0, pr: 0, nome: String(r.partita || r.squadra) }); c.n++; c.ok += r.esito; c.pr += r.prob; }
+  let h = `<h2>Schedine proposte</h2>`;
+  if (!ris.length) return h + `<div class="vuoto">Salvate ${l.length} schedine, ${att} in attesa che le partite finiscano. Qui vedrai quante ne vengono centrate.</div>`;
+  h += `<div class="grid2">` + Object.values(per).map((c) => barraPerc(c.nome, c.ok, c.n, c.pr / c.n)).join("") + `</div>`;
+  h += ris.slice(0, 8).map((r) => `<div class="card riga" style="padding:9px 12px;gap:10px"><div style="min-width:0"><div style="font-weight:500">${esc(r.partita)} · ${esc(r.data)}</div><div class="s">${esc(r.dettaglio || "")} · prevista ${pct(r.prob)}</div></div><b style="color:${r.esito === 1 ? GR : RD}">${r.esito === 1 ? "Centrata" : "Sbagliata"}</b></div>`).join("");
+  return h;
+}
+function rigaEsito(r) {
+  const [s, c] = { 1: ["✓", GR], 0: ["✗", RD], 2: ["–", MU] }[r.esito];
+  return `<div class="card riga" style="padding:10px 12px;gap:10px;justify-content:flex-start"><div style="width:28px;height:28px;border-radius:50%;background:${c}22;color:${c};display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">${s}</div><div style="min-width:0;flex:1"><div style="font-weight:500">${esc(r.testo)}</div><div class="s">${esc(r.partita)} · ${esc(r.dettaglio || "")}</div></div><div class="s">${pct(r.prob)}</div></div>`;
+}
+async function vistaEsiti() {
+  APP.innerHTML = topBar() + segStorico("e") + giorniChips() + skel(); bindGiorni();
+  let E; try { E = await api("/api/esiti?" + qs(), 60000); } catch (e) { APP.innerHTML = topBar() + segStorico("e") + giorniChips() + errBox(e); bindGiorni(); return; }
+  const ris = E.risultati, val = ris.filter((x) => x.esito !== 2); ultimoD = { squadre: E.squadre || {} };
+  let h = topBar() + segStorico("e") + giorniChips();
   if (!val.length) h += `<div class="vuoto">Nessuna partita finita da verificare per questo giorno. Torna a partite concluse.</div>`;
   else {
     const ok = val.filter((x) => x.esito === 1).length, p = ok / val.length * 100;
@@ -1044,7 +1095,7 @@ let timer = null;
 function route(force) {
   clearTimeout(timer); barraMia();
   const hsh = location.hash.replace(/^#/, "") || "/";
-  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") || hsh.startsWith("/categoria") || hsh.startsWith("/mia") ? "consigli" : hsh.startsWith("/esiti") ? "esiti" : hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") || hsh.startsWith("/impostazioni") ? "storico" : "partite";
+  const attivo = hsh.startsWith("/live") ? "live" : hsh.startsWith("/schedine") ? "schedine" : hsh.startsWith("/combo") || hsh.startsWith("/categoria") || hsh.startsWith("/mia") ? "consigli" : hsh.startsWith("/esiti") || hsh.startsWith("/storico") ? "storico" : hsh.startsWith("/diag") || hsh.startsWith("/registro") || hsh.startsWith("/impostazioni") ? "storico" : "partite";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === attivo));
   const cat = /^\/categoria\/(\d+)/.exec(hsh), m = /^\/partita\/(\d+)/.exec(hsh), gp = /^\/giocatore\/(\d+)/.exec(hsh);
   if (hsh.startsWith("/impostazioni")) vistaImpostazioni();

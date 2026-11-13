@@ -212,3 +212,18 @@ input,select,textarea{font-size:16px!important}
 .cl{position:relative}.cl .star{position:absolute;top:-12px;left:-8px;font-size:17px;padding:4px 6px;background:rgba(4,6,10,.55);border-radius:10px}.cl.ca .star{left:auto;right:-8px}
 .cl .star{top:auto;bottom:-14px}
 details.giorno>summary{display:flex;align-items:center;gap:8px}
+
+/* v50 - stile tabellone */
+h2{font-family:'Barlow Condensed',Inter,sans-serif;font-weight:700;font-size:24px;letter-spacing:.02em}
+h2.sez{display:flex;align-items:center;gap:8px;margin:22px 0 10px}
+h2.sez .n{margin-left:auto;font-size:15px;font-weight:600;color:var(--mut);background:var(--chip);border-radius:999px;padding:1px 10px}
+h2.sez.live{color:var(--or)}
+.riep{font-size:14px;color:var(--mut);margin:2px 2px 12px}
+.gdg{display:block;position:relative;overflow:hidden;border-radius:20px;padding:16px 18px;margin-bottom:6px;color:inherit;border:1px solid rgba(255,138,42,.4);background:linear-gradient(135deg,#2a1c0e 0%,#14100b 70%)}
+.gdg .gt{font-size:13px;color:var(--or);font-weight:600}
+.gdg .gx{font-family:'Barlow Condensed',Inter,sans-serif;font-weight:700;font-size:30px;line-height:1.05;margin:6px 0 8px}
+.gdg .gp{display:flex;align-items:baseline;gap:12px}.gdg .gp b{font-family:'Barlow Condensed',Inter,sans-serif;font-size:36px;color:var(--gr,#3ddc84)}
+.gdg .gb{height:5px;border-radius:3px;background:#2a2218;margin-top:10px}.gdg .gb i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--or),#3ddc84)}
+.seg{display:flex;gap:6px;margin:0 0 12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px}
+.seg a{flex:1;text-align:center;padding:8px 4px;border-radius:10px;font-size:13px;color:var(--mut)}.seg a.on{background:var(--chip);color:#fff;box-shadow:inset 0 0 0 1px rgba(255,138,42,.45)}
+.card.inlive{box-shadow:0 0 0 1px rgba(255,138,42,.5),0 0 24px rgba(255,138,42,.12)}
