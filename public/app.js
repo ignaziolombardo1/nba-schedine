@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "57";
+const VERSIONE = "58";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -43,7 +43,7 @@ const dati = async (force) => { if (force) delete cache["/api/giorno?" + qs()]; 
 
 // ---------- pezzi grafici
 const T = (D, ab) => (D.squadre && D.squadre[ab]) || { n: ab, b: ab, c: "#4a5060" };
-const logo = (ab, s = 38) => `<img class="tl" style="width:${s}px;height:${s}px" loading="lazy" alt="" src="https://a.espncdn.com/i/teamlogos/nba/500/${esc(String(ab).toLowerCase())}.png" onerror="this.style.visibility='hidden'">`;
+const logo = (ab, s = 38) => { const a = esc(String(ab)); return `<img class="tl" style="width:${s}px;height:${s}px" loading="lazy" alt="" src="https://a.espncdn.com/i/teamlogos/nba/500/${a.toLowerCase()}.png" data-ab="${a}" onerror="this.outerHTML='<span class=tlf style=width:${s}px;height:${s}px;font-size:${Math.max(9, Math.round(s / 3.4))}px>'+this.dataset.ab.slice(0,3)+'</span>'">`; };
 const foto = (pid, s = 46) => pid ? `<img class="ph" style="width:${s}px;height:${s}px" loading="lazy" alt="" src="https://a.espncdn.com/i/headshots/nba/players/full/${esc(pid)}.png" onerror="this.style.visibility='hidden'">` : `<span class="ph" style="width:${s}px;height:${s}px;display:inline-block"></span>`;
 function anello(p, col, size = 52) {
   const r = size / 2 - 5, L = 2 * Math.PI * r, c = size / 2;
@@ -164,7 +164,7 @@ function tabQuarti(p, D) {
   const n = Math.max(a.length, b.length, 4), cur = p.stato === "in" ? (p.periodo || 0) : 0;
   const nm = (i) => (i < 4 ? "Q" + (i + 1) : i === 4 ? "OT" : "OT" + (i - 3));
   const riga = (ab, q, tot) => `<tr><td><b>${esc(ab)}</b></td>${Array.from({ length: n }, (_, i) => `<td class="${cur === i + 1 ? "cur" : ""}">${q[i] ?? "–"}</td>`).join("")}<td class="tot">${tot ?? 0}</td></tr>`;
-  return `<table class="qt"><tr><th></th>${Array.from({ length: n }, (_, i) => `<th>${nm(i)}</th>`).join("")}<th>TOT</th></tr>${riga(p.trasf, a, p.ptTr)}${riga(p.casa, b, p.ptCasa)}</table>`;
+  return `<table class="qt"><tr><th></th>${Array.from({ length: n }, (_, i) => `<th>${nm(i)}</th>`).join("")}<th>TOT</th></tr>${riga(p.casa, b, p.ptCasa)}${riga(p.trasf, a, p.ptTr)}</table>`;
 }
 // illumina la squadra che ha appena segnato (confronta con l'ultimo punteggio visto)
 const ultimiPt = {};
@@ -182,10 +182,10 @@ function schedaPartita(D, p, topPick, cliccabile) {
   if (p.stato === "post") { chip = "Finale"; col = GR; } else if (p.stato === "in") { chip = `<span class="dot"></span>Live · ${esc(p.dettaglio)}`; col = OR; } else chip = esc(p.ora);
   const fav = r.margine > 0 ? p.casa : p.trasf;
   const cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#5a6378" : v.c;
-  const team = (ab, ruolo, stima) => `<div class="tm">${logo(ab, 54)}<div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div><div class="st">${stima.toFixed(0)} <span>stimati</span></div></div>`;
+  const team = (ab, ruolo, stima, l) => `<div class="tm" data-l="${l}">${logo(ab, 54)}<div class="tn">${esc(T(D, ab).b)}</div><div class="s">${ruolo}</div><div class="st">${stima.toFixed(0)} <span>stimati</span></div></div>`;
   const centro = p.stato === "pre"
     ? `<div class="mid"><div class="ora">${esc(String(p.ora).slice(-5))}</div><div class="s">${esc(String(p.ora).slice(0, 5))}</div></div>`
-    : `<div class="mid"><div class="sc"><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="t">${p.ptTr ?? 0}</span><i>-</i><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="c">${p.ptCasa ?? 0}</span></div></div>`;
+    : `<div class="mid"><div class="sc"><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="c">${p.ptCasa ?? 0}</span><i>-</i><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="t">${p.ptTr ?? 0}</span></div></div>`;
   let chips = `<span class="chip">Totale ${r.totale.toFixed(0)}</span>`;
   if (topPick) chips += `<span class="chip" style="color:${GR}">${esc(topPick.testo)} · ${pct(topPick.prob)}</span>`;
   for (const s of [p.casa, p.trasf]) if ((D.b2b || []).includes(s)) chips += `<span class="chip" style="color:${AM}">${esc(T(D, s).b)} back-to-back</span>`;
@@ -197,16 +197,16 @@ function schedaPartita(D, p, topPick, cliccabile) {
     const q = (p.qTr || []).length ? `<div class="qr" data-qt>${(p.qTr || []).map((v, i) => `<span class="${p.stato === "in" && p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${(p.qCasa || [])[i] ?? 0}-${v}</span>`).join("")}</div>` : "";
     const fin = p.stato === "post";
     return `<${fin ? "div" : "a"} class="card gm cmp${p.stato === "in" ? " inlive" : ""}"${fin ? ` data-tab="${p.id}" data-casa="${p.casa}" data-trasf="${p.trasf}"` : ` href="#/partita/${p.id}"`} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}${fin ? ";cursor:pointer" : ""}">
-  <div class="riga" style="margin-bottom:4px"><span class="pill" data-pill style="color:${col}">${chip}</span><span class="s">${p.stato === "pre" ? `stimati ${r.ptTr.toFixed(0)}-${r.ptCasa.toFixed(0)}` : fin ? "Tabellino" : "Studia"} <i class="ti ${fin ? "ti-chevron-down" : "ti-chevron-right"}"></i></span></div>
+  <div class="riga" style="margin-bottom:4px"><span class="pill" data-pill style="color:${col}">${chip}</span><span class="s">${p.stato === "pre" ? `stimati ${r.ptCasa.toFixed(0)}-${r.ptTr.toFixed(0)}` : fin ? "Tabellino" : "Studia"} <i class="ti ${fin ? "ti-chevron-down" : "ti-chevron-right"}"></i></span></div>
   <div class="cg"><div class="tm cr" data-l="c">${lato(p.casa, "ca", 1)}</div>${mezzo}<div class="tm cr" data-l="t">${lato(p.trasf, "tr", 2)}</div></div>${q}
   <div class="bar" style="margin:6px 0 6px"><div style="width:${(r.pw * 100).toFixed(0)}%;background:${cc}"></div><div style="flex:1;background:${ct}"></div></div>${chips}</${fin ? "div" : "a"}>${fin ? `<div class="tabl" id="tb${p.id}" hidden></div>` : ""}`;
   }
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
   return `<${tag} class="card gm${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
   <div class="riga" style="margin-bottom:10px"><span class="pill" data-pill style="color:${col}">${chip}</span>${cliccabile ? `<span class="s">Studia <i class="ti ti-chevron-right"></i></span>` : ""}</div>
-  <div class="mu">${team(p.trasf, "trasferta", r.ptTr)}${centro}${team(p.casa, "casa", r.ptCasa)}</div>${p.stato !== "pre" ? `<div data-qt>${tabQuarti(p, D)}</div>` : ""}
-  <div class="bar"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>
-  <div class="riga s" style="margin:4px 0 8px"><b style="color:#e8eaf0">${pct(1 - r.pw)}</b><b style="color:#e8eaf0">${pct(r.pw)}</b></div>${chips}</${tag}>`;
+  <div class="mu">${team(p.casa, "casa", r.ptCasa, "c")}${centro}${team(p.trasf, "trasferta", r.ptTr, "t")}</div>${p.stato !== "pre" ? `<div data-qt>${tabQuarti(p, D)}</div>` : ""}
+  <div class="bar"><div style="width:${(r.pw * 100).toFixed(0)}%;background:${cc}"></div><div style="flex:1;background:${ct}"></div></div>
+  <div class="riga s" style="margin:4px 0 8px"><b style="color:#e8eaf0">1 · ${pct(r.pw)}</b><b style="color:#e8eaf0">${pct(1 - r.pw)} · 2</b></div>${chips}</${tag}>`;
 }
 const raggruppa = (picks) => [["Molto probabili (80% o più)", picks.filter((x) => x.prob >= 0.8)], ["Probabili (70-80%)", picks.filter((x) => x.prob >= 0.7 && x.prob < 0.8)], ["Da valutare (sotto il 70%)", picks.filter((x) => x.prob < 0.7)]];
 
@@ -604,7 +604,7 @@ function probCustom(g, c) {
   let v, sd, nome = "", pid = null, sq = null, k = c.k;
   if (k === "win") {
     const casa = c.sq === g.casa, p = casa ? g.r.pw : 1 - g.r.pw, nm = T(window.__D, c.sq).b, m = casa ? g.r.margine : -g.r.margine;
-    return { id: "mio_" + Date.now() + Math.random().toString(36).slice(2, 6), chiave: null, testo: `${casa ? "1" : "2"} · ${nm} vince`, prob: p, partita: `${g.trasf} @ ${g.casa}`, g: g.id, pid: null, sq: c.sq, k: "win", dir: "over", soglia: null, nome: null, mia: true, stima: m };
+    return { id: "mio_" + Date.now() + Math.random().toString(36).slice(2, 6), chiave: null, testo: `${casa ? "1" : "2"} · ${nm} vince`, prob: p, partita: `${g.casa} - ${g.trasf}`, g: g.id, pid: null, sq: c.sq, k: "win", dir: "over", soglia: null, nome: null, mia: true, stima: m };
   }
   if (k === "tot") { v = g.r.totale; sd = 17; nome = "Totale"; }
   else if (k === "sq") { v = c.sq === g.casa ? g.r.ptCasa : g.r.ptTr; sd = 12; sq = c.sq; nome = T(window.__D, c.sq).b; }
@@ -612,7 +612,7 @@ function probCustom(g, c) {
   let p = over(v, sd, c.soglia); if (c.dir === "under") p = 1 - p; p *= c.pg || 1;
   const u = k === "pts" ? "pt" : k === "reb" ? "rimb." : k === "ast" ? "ass." : "punti";
   const testo = k === "tot" ? `Totale ${c.dir} ${c.soglia}` : k === "sq" ? `${nome} ${c.dir} ${c.soglia} punti` : `${nome} ${c.dir} ${c.soglia} ${u}`;
-  return { id: "mio_" + Date.now() + Math.random().toString(36).slice(2, 6), chiave: null, testo, prob: p, partita: `${g.trasf} @ ${g.casa}`, g: g.id, pid, sq, k, dir: c.dir, soglia: c.soglia, nome: k === "tot" || k === "sq" ? null : nome, mia: true, stima: v };
+  return { id: "mio_" + Date.now() + Math.random().toString(36).slice(2, 6), chiave: null, testo, prob: p, partita: `${g.casa} - ${g.trasf}`, g: g.id, pid, sq, k, dir: c.dir, soglia: c.soglia, nome: k === "tot" || k === "sq" ? null : nome, mia: true, stima: v };
 }
 async function vistaMia() {
   const back = `<a class="back" href="#/combo"><i class="ti ti-chevron-left"></i>Consigli</a>`;
@@ -665,7 +665,7 @@ async function vistaMia() {
     } else {
       const C = ls.get("miaForm", { g: "", k: "pts", pid: "", sq: "", dir: "over", soglia: "" }), g = gare.find((x) => x.id === C.g) || gare[0], pl = g.giocatori.slice().sort((a, b) => b.pts.v - a.pts.v);
       const sel = (id, opts, val) => `<select class="linea" id="${id}" style="margin:0">${opts.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(val) ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
-      h += `<div class="cap" style="margin-top:0">Scrivi la linea che vedi sul tuo bookmaker: l'app calcola la probabilità.</div><div class="card">${sel("cg", gare.map((x) => [x.id, `${x.trasf} @ ${x.casa} · ${String(x.ora).slice(-5)}`]), g.id)}
+      h += `<div class="cap" style="margin-top:0">Scrivi la linea che vedi sul tuo bookmaker: l'app calcola la probabilità.</div><div class="card">${sel("cg", gare.map((x) => [x.id, `${x.casa} - ${x.trasf} · ${String(x.ora).slice(-5)}`]), g.id)}
       <div class="grid2" style="margin-top:8px">${sel("ck", [["pts", "Punti giocatore"], ["reb", "Rimbalzi giocatore"], ["ast", "Assist giocatore"], ["tot", "Totale partita"], ["sq", "Punti di una squadra"], ["win", "Vincente (1 / 2)"]], C.k)}${C.k === "win" ? "" : sel("cd", [["over", "Over"], ["under", "Under"]], C.dir)}</div>
       ${["pts", "reb", "ast"].includes(C.k) ? `<div style="margin-top:8px">${sel("cp", pl.map((x) => [x.pid, `${x.nome} (${x.sq})`]), C.pid || (pl[0] && pl[0].pid))}</div>` : C.k === "sq" ? `<div style="margin-top:8px">${sel("cs", [[g.trasf, g.trasf], [g.casa, g.casa]], C.sq || g.trasf)}</div>` : C.k === "win" ? `<div style="margin-top:8px">${sel("cs", [[g.casa, `1 · ${T(window.__D, g.casa).b} (casa)`], [g.trasf, `2 · ${T(window.__D, g.trasf).b} (trasferta)`]], C.sq || g.casa)}</div>` : ""}
       ${C.k === "win" ? `<input type="hidden" id="cl" value="1">` : `<input class="linea" inputmode="decimal" id="cl" placeholder="Linea del bookmaker (es. 19.5)" value="${esc(C.soglia)}" style="margin:8px 0 0">`}<div id="cprob"></div><button class="btn" id="cadd" style="margin:8px 0 0">Aggiungi alla schedina</button></div>`;
@@ -884,7 +884,7 @@ function ultimeHtml(D, sig, ul) {
   if (!ul || !ul.length) return `<div class="cap">Ultimi incontri di ${esc(sig)} non disponibili.</div>`;
   const m = (f) => ul.reduce((a, x) => a + f(x), 0) / ul.length;
   return `<div class="card"><div class="riga"><div class="lg">${logo(sig, 30)}<b>${esc(T(D, sig).n)}</b></div><div>${ul.map((x) => `<span class="fm" style="background:${x.vinta ? GR : RD}">${x.vinta ? "V" : "S"}</span>`).join("")}</div></div><div class="s" style="margin:6px 0 8px">Ultime ${ul.length}: ${m((x) => x.pf).toFixed(1)} fatti, ${m((x) => x.pa).toFixed(1)} subiti · totale ${m((x) => x.pf + x.pa).toFixed(1)}</div>` +
-    ul.map((x) => `<div class="riga rg"><div class="lg">${logo(x.avv, 22)}<div><div style="font-weight:500">${x.casa ? "vs" : "@"} ${esc((D.squadre[x.avv] || { b: x.avv }).b)}</div><div class="s">${esc(x.data)}</div></div></div><b style="color:${x.vinta ? GR : RD}">${x.pf}-${x.pa}</b></div>`).join("") + `</div>`;
+    ul.map((x) => `<div class="riga rg"><div class="lg">${logo(x.avv, 22)}<div><div style="font-weight:500">${x.casa ? "in casa con" : "in trasferta da"} ${esc((D.squadre[x.avv] || { b: x.avv }).b)}</div><div class="s">${esc(x.data)}</div></div></div><b style="color:${x.vinta ? GR : RD}">${x.pf}-${x.pa}</b></div>`).join("") + `</div>`;
 }
 
 
@@ -916,7 +916,7 @@ function aggiornaStoriaLive(D) {
     for (const q of p.picks || []) {
       const k = p.id + "|" + (q.id || q.testo), prima = statoGiocate[k];
       const ora = q.pLive >= 0.995 ? "ok" : q.pLive <= 0.03 ? "no" : "in";
-      if (prima && prima !== ora && ora !== "in") eventiLive.push({ t: Date.now(), ok: ora === "ok", testo: q.testo, partita: `${p.trasf} @ ${p.casa}` });
+      if (prima && prima !== ora && ora !== "in") eventiLive.push({ t: Date.now(), ok: ora === "ok", testo: q.testo, partita: `${p.casa} - ${p.trasf}` });
       statoGiocate[k] = ora;
     }
   }
@@ -948,7 +948,7 @@ function formazioniLive(D, p) {
     const hd = `<tr class="th"><th></th><th>PT</th><th>RB</th><th>AS</th><th>3P</th><th>PR</th><th>ST</th><th>FL</th><th>MIN</th></tr>`;
     return `<div class="card fz"><div class="lg" style="margin-bottom:4px">${logo(sq, 24)}<b>${esc(T(D, sq).n)}</b><span class="s" style="margin-left:auto">${sq === p.casa ? "casa" : "trasferta"}</span></div><table class="bx">${hd}${(tit.length ? tit : pan.slice(0, 5)).map(rg).join("")}</table>${(tit.length ? pan : pan.slice(5)).length ? `<details class="pan"><summary>Panchina (${(tit.length ? pan : pan.slice(5)).length})</summary><table class="bx">${hd}${(tit.length ? pan : pan.slice(5)).map(rg).join("")}</table></details>` : ""}</div>`;
   };
-  return `<div class="sub">Formazioni e statistiche</div>` + tab(p.trasf) + tab(p.casa) + `<div class="cap" style="margin-top:0">PT punti · RB rimbalzi · AS assist · 3P triple (segnate-tentate) · PR palle rubate · ST stoppate · FL falli (rosso da 4) · MIN minuti. In arancione chi ha 20+ punti o una doppia doppia.</div>`;
+  return `<div class="sub">Formazioni e statistiche</div>` + tab(p.casa) + tab(p.trasf) + `<div class="cap" style="margin-top:0">PT punti · RB rimbalzi · AS assist · 3P triple (segnate-tentate) · PR palle rubate · ST stoppate · FL falli (rosso da 4) · MIN minuti. In arancione chi ha 20+ punti o una doppia doppia.</div>`;
 }
 
 // stato di una giocata della mia schedina rispetto alla partita in corso
@@ -984,7 +984,7 @@ async function vistaLive(primo = true) {
   B.push(["top", topBar(D) + novitaLive() + `<div class="cap" style="margin-top:0">Si aggiorna da solo ogni 6 secondi (ESPN pubblica i dati ogni 10-20 secondi circa). Le probabilità tengono conto di punteggio, tempo rimasto e minuti giocati.</div>`]);
   if (!D.partite.length) {
     let h = `<div class="vuoto"><b>Nessuna partita in corso.</b><br>Oggi: ${D.totali} partite, ${D.finite} finite.</div>`;
-    if (D.prossime.length) h += `<h2>Prossime partite</h2>` + D.prossime.map((q) => `<a class="card riga" href="#/partita/${q.id}"><div class="lg">${logo(q.trasf, 28)}<b>${esc(q.trasf)}</b><span class="s">@</span>${logo(q.casa, 28)}<b>${esc(q.casa)}</b></div><span class="s">${esc(q.ora)}</span></a>`).join("");
+    if (D.prossime.length) h += `<h2>Prossime partite</h2>` + D.prossime.map((q) => `<a class="card riga" href="#/partita/${q.id}"><div class="lg">${logo(q.casa, 28)}<b>${esc(q.casa)}</b><span class="s">-</span>${logo(q.trasf, 28)}<b>${esc(q.trasf)}</b></div><span class="s">${esc(q.ora)}</span></a>`).join("");
     B.push(["vuoto", h]);
   }
   B.push(["mie", mieGiocateLive(D)]);

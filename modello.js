@@ -102,7 +102,7 @@ export function consigli(partite) {
   // partite: [{id, casa, trasf, r, giocatori}] -> lista di giocate ordinate per probabilità
   const out = [];
   for (const g of partite) {
-    const { casa, trasf, r } = g, part = `${nome(trasf, true)} @ ${nome(casa, true)}`;
+    const { casa, trasf, r } = g, part = `${nome(casa, true)} - ${nome(trasf, true)}`;
     const base = { g: g.id, partita: part };
     const pw = phi(Math.abs(r.margine) / STD.Spread), fav = r.margine > 0 ? casa : trasf;
     if (pw >= 0.60) out.push({ ...base, id: `win_${g.id}`, tipo: "Vincente", squadra: fav, testo: `${nome(fav, true)} vince`, stima: `+${Math.abs(r.margine).toFixed(1)}`, prob: pw,
@@ -211,7 +211,7 @@ export function stimaTotale(cur, f, preTot) {
 export function segnaliLive(gara, box, giocatori) {
   const { casa, trasf, ptCasa, ptTr, r, f } = gara, rest = Math.max(0, 1 - f), out = [];
   if (rest < 0.03) return out;
-  const part = `${nome(trasf, true)} @ ${nome(casa, true)}`, MIN_P = 0.70;
+  const part = `${nome(casa, true)} - ${nome(trasf, true)}`, MIN_P = 0.70;
   const cur = ptCasa + ptTr, exp = stimaTotale(cur, f, r.totale), sd = Math.max(STD.Totale * Math.sqrt(rest), 0.6);
   const tt = []; for (let T = Math.floor(exp - 6 * sd) + 0.5; T <= exp + 6 * sd; T += 1) if (T > cur) tt.push(T);
   const ov = tt.filter((T) => 1 - phi((T - exp) / sd) >= MIN_P), un = tt.filter((T) => phi((T - exp) / sd) >= MIN_P);

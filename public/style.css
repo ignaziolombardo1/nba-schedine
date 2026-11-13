@@ -231,3 +231,4 @@ h2.sez.live{color:var(--or)}
 .n12{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:6px;margin-right:6px;background:#232a3a;color:#aab2c3;font:700 12px/1 'Barlow Condensed',Inter,sans-serif;vertical-align:1px}.n12.fv{background:var(--or);color:#1a1006}
 .cl .star,.cl.ca .star{position:static;background:none;padding:0 0 0 4px;margin:0;font-size:17px;top:auto;left:auto;right:auto;bottom:auto}.cl .tn{display:flex;align-items:center;white-space:nowrap}
 .cl .tn{overflow:visible;text-overflow:clip;padding-left:2px}
+.tlf{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:50%;background:#232a3a;color:#cfd4df;font-family:'Barlow Condensed',Inter,sans-serif;font-weight:700;letter-spacing:.02em}

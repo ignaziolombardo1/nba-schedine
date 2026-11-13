@@ -59,7 +59,7 @@ function dovePiuDiverso(gare) {
   for (const g of gare) for (const x of g.giocatori) for (const k of ["pts", "reb", "ast"]) {
     const m = x[k] && x[k].mk; if (!m) continue;
     const over = m.pFin >= 0.5, pF = over ? m.pFin : 1 - m.pFin, pM = over ? m.pMk : 1 - m.pMk, pMod = over ? m.pMod : 1 - m.pMod;
-    l.push({ g: g.id, partita: `${g.trasf} @ ${g.casa}`, pid: x.pid, nome: x.nome, sq: x.sq, mercato: nomi[k], lato: over ? "over" : "under", linea: m.linea, pMk: pM, pMod, pFin: pF, edge: pF - pM, div: m.div, n: m.n });
+    l.push({ g: g.id, partita: `${g.casa} - ${g.trasf}`, pid: x.pid, nome: x.nome, sq: x.sq, mercato: nomi[k], lato: over ? "over" : "under", linea: m.linea, pMk: pM, pMod, pFin: pF, edge: pF - pM, div: m.div, n: m.n });
   }
   return l.sort((a, b) => b.edge - a.edge).slice(0, 12);
 }
@@ -252,13 +252,13 @@ async function cronAvvisi(env) {
     oggi.i ||= {}; oggi.f ||= {};
     for (const p of g.partite) {
       if (!subs.some((sb) => segue(sb, p))) continue;
-      if (p.stato === "in" && !oggi.i[p.id]) { await accodaPush(env, { titolo: `🏀 ${p.trasf} @ ${p.casa}`, testo: "La partita è iniziata. Tocca per seguirla in diretta.", url: "/#/live" }, (sb) => sb.pref && segue(sb, p)); oggi.i[p.id] = 1; fatto.push("inizio " + p.id); }
+      if (p.stato === "in" && !oggi.i[p.id]) { await accodaPush(env, { titolo: `🏀 ${p.casa} - ${p.trasf}`, testo: "La partita è iniziata. Tocca per seguirla in diretta.", url: "/#/live" }, (sb) => sb.pref && segue(sb, p)); oggi.i[p.id] = 1; fatto.push("inizio " + p.id); }
       if (p.stato === "post" && !oggi.f[p.id]) {
         let box = {}; try { box = await caricaBoxscore(p.id, 600); } catch {}
-        const finale = `Finale: ${p.trasf} ${p.ptTr} - ${p.ptCasa} ${p.casa}`;
+        const finale = `Finale: ${p.casa} ${p.ptCasa} - ${p.ptTr} ${p.trasf}`;
         for (const sb of subs.filter((x) => segue(x, p))) {
           const righe = sb.pref.pl.filter((x) => x.sq === p.casa || x.sq === p.trasf).map((x) => { const b = box[x.pid]; return b ? `${x.nome}: ${b.pts ?? 0} pt, ${b.reb ?? 0} rb, ${b.ast ?? 0} as` : null; }).filter(Boolean);
-          await accodaPush(env, { titolo: `🏁 ${p.trasf} @ ${p.casa}`, testo: [finale, ...righe].join("\n"), url: `/#/partita/${p.id}` }, (x) => x.endpoint === sb.endpoint);
+          await accodaPush(env, { titolo: `🏁 ${p.casa} - ${p.trasf}`, testo: [finale, ...righe].join("\n"), url: `/#/partita/${p.id}` }, (x) => x.endpoint === sb.endpoint);
         }
         oggi.f[p.id] = 1; fatto.push("fine " + p.id);
       }
