@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "43";
+const VERSIONE = "44";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -378,6 +378,12 @@ function statisticheRegistro(chiuse) {
   <div class="s" style="margin-top:8px">Centrate ${(chiuse.filter((r) => r.esito === 1).length / chiuse.length * 100).toFixed(0)}% · previste in media ${(pm * 100).toFixed(0)}% · quota pareggio ${(1 / Math.max(0.01, chiuse.filter((r) => r.esito === 1).length / chiuse.length)).toFixed(2)}</div></div>
   <div class="sub">Rendimento per tipo di giocata</div>` + Object.entries(per).sort((x, y) => y[1].n - x[1].n).map(([t, c]) => `<div class="card riga" style="padding:9px 12px"><div><div style="font-weight:500">${esc(nomi[t] || t)}</div><div class="s">${c.ok}/${c.n} centrate · ${c.pu.toFixed(0)} € puntati</div></div><b style="color:${c.pr >= 0 ? GR : RD}">${eur(c.pr)} <span class="s">(${(c.pr / c.pu * 100).toFixed(0)}%)</span></b></div>`).join("");
 }
+// Salva solo esito e nota sul registro attuale: una giocata aggiunta o tolta nel frattempo non si perde mai
+function salvaReg(nuovo) {
+  const m = new Map(nuovo.map((r) => [r.id, r])), att = ls.get("registro", []);
+  const out = att.map((r) => { const n = m.get(r.id); return n && r.esito == null ? { ...r, esito: n.esito, nota: n.nota } : r; });
+  ls.set("registro", out); return out;
+}
 let aggiornandoReg = false;
 // Controlla da solo le giocate aperte: si chiama all'avvio, al ritorno nell'app, nel Live e nel Registro
 async function aggiornaRegistro(reg = ls.get("registro", [])) {
@@ -390,7 +396,7 @@ async function aggiornaRegistro(reg = ls.get("registro", [])) {
         if (r.esito != null) return r;
         if (r.legs && r.legs.length && r.legs.every((l) => l.chiave)) { const es = r.legs.map((l) => m.get(l.chiave)); if (es.some((e) => e === 0)) return { ...r, esito: 0 }; if (es.every((e) => e === 1)) return { ...r, esito: 1 }; return r; }
         const e = m.get(r.chiave); return (e === 0 || e === 1) ? { ...r, esito: e } : r; });
-      ls.set("registro", reg);
+      reg = salvaReg(reg);
     } catch {}
   }
   const conLegs = reg.filter((r) => r.esito == null && r.legs && r.legs.length);
@@ -404,7 +410,7 @@ async function aggiornaRegistro(reg = ls.get("registro", [])) {
         if (es.some((x) => x.esito === 2)) return { ...r, nota: "una giocata annullata (giocatore non sceso in campo): segna tu l'esito" };
         if (es.every((x) => x.esito === 1)) return { ...r, esito: 1 };
         return r;
-      }); ls.set("registro", reg);
+      }); reg = salvaReg(reg);
     } catch {}
   }
   } finally { aggiornandoReg = false; }
@@ -829,10 +835,10 @@ function avanzamentoLeg(l, D) {
   return { st, cur, soglia: sg, testo: `${cur} / ${sg}`, p };
 }
 function mieGiocateLive(D) {
-  const R = ls.get("registro", []).filter((r) => r.esito == null && r.legs && r.legs.length);
+  const oggi = new Date().toISOString().slice(0, 10), R = ls.get("registro", []).filter((r) => r.legs && r.legs.length && (r.esito == null || String(r.data) >= oggi || r.esito != null && String(r.data) >= new Date(Date.now() - 86400000).toISOString().slice(0, 10)));
   if (!R.length) return "";
   const col = { ok: GR, no: RD, in: OR, vant: GR, svant: AM, pre: MU, nd: MU };
-  return `<div class="sub"><i class="ti ti-ticket" style="color:${OR}"></i> Le mie giocate</div>` + R.map((r) => `<div class="card"><div class="riga"><b>${esc(r.nome)}</b><span class="s">quota ${r.quota} · ${r.puntata} € <button class="chipbtn" data-delm="${esc(r.id)}" style="padding:2px 9px;font-size:11px;margin-left:6px">Rimuovi</button></span></div>` + r.legs.map((l) => {
+  return `<div class="sub"><i class="ti ti-ticket" style="color:${OR}"></i> Le mie giocate</div>` + R.map((r) => `<div class="card"><div class="riga"><b>${esc(r.nome)}</b><span class="s">${r.esito === 1 ? "<b style=\"color:" + GR + "\">VINTA</b> · " : r.esito === 0 ? "<b style=\"color:" + RD + "\">PERSA</b> · " : ""}quota ${r.quota} · ${r.puntata} €${r.esito == null ? `<button class="chipbtn" data-delm="${esc(r.id)}" style="padding:2px 9px;font-size:11px;margin-left:6px">Rimuovi</button>` : ""}</span></div>` + r.legs.map((l) => {
     const a = avanzamentoLeg(l, D), c = col[a.st] || MU, pr = a.soglia > 0 && a.cur != null ? Math.max(0, Math.min(100, (a.cur / a.soglia) * 100)) : 0;
     const ic = a.st === "ok" ? "ti-circle-check-filled" : a.st === "no" ? "ti-circle-x-filled" : "ti-circle-dashed";
     return `<div style="margin-top:10px"><div class="riga" style="gap:8px"><div style="min-width:0;flex:1"><i class="ti ${ic}" style="color:${c}"></i> ${esc(l.testo)}</div><b style="color:${c};white-space:nowrap">${esc(a.testo)}</b></div>${a.soglia > 0 ? `<div class="bar" style="height:4px;margin-top:4px"><div style="width:${pr}%;background:${c}"></div></div>` : ""}${a.p ? `<div class="s" style="margin-top:2px">${esc(a.p.dettaglio || "")}</div>` : ""}</div>`;
