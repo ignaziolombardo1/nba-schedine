@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "45";
+const VERSIONE = "46";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -65,7 +65,22 @@ function barraMia() {
   const q = L.reduce((a, l) => a / Math.max(0.05, l.prob), 1);
   el.style.display = "flex"; el.innerHTML = L.length ? `<a href="#/mia" aria-label="La mia schedina: ${L.length} giocate, quota giusta ${q.toFixed(2)}"><i class="ti ti-ticket"></i><b>${L.length}</b></a>` : `<a href="#/mia" class="vuota" aria-label="Componi la tua schedina"><i class="ti ti-ticket"></i><b>Schedina</b></a>`;
 }
-document.addEventListener("click", (e) => {
+const tabelliniCache = {};
+document.addEventListener("click", async (e) => {
+  const tb = e.target.closest("[data-tab]");
+  if (tb) {
+    const id = tb.dataset.tab, box = document.getElementById("tb" + id), ch = tb.querySelector(".ti-chevron-down,.ti-chevron-up"); if (!box) return;
+    if (!box.hidden) { box.hidden = true; ch && ch.classList.replace("ti-chevron-up", "ti-chevron-down"); return; }
+    box.hidden = false; ch && ch.classList.replace("ti-chevron-down", "ti-chevron-up");
+    if (!tabelliniCache[id]) {
+      box.innerHTML = skel();
+      try {
+        const R = await api("/api/tabellino?id=" + id, 120);
+        tabelliniCache[id] = formazioniLive(ultimoD, { giocatori: R.giocatori || [], casa: tb.dataset.casa, trasf: tb.dataset.trasf }) + `<a class="btn" style="display:block;text-align:center" href="#/partita/${id}">Apri lo studio di questa partita</a>`;
+      } catch { box.innerHTML = `<div class="vuoto">Tabellino non disponibile, riprova tra poco.</div>`; return; }
+    }
+    box.innerHTML = tabelliniCache[id]; return;
+  }
   const d = e.target.closest("[data-delm]");
   if (d) { // doppio tocco per confermare
     if (d.dataset.sicuro) { ls.set("registro", ls.get("registro", []).filter((r) => r.id !== d.dataset.delm)); if (location.hash.startsWith("#/live")) { clearTimeout(timer); vistaLive(false); } return; }
@@ -151,10 +166,11 @@ function schedaPartita(D, p, topPick, cliccabile) {
       ? `<div class="cm"><span class="w">${pct(1 - r.pw)}</span><i>-</i><span class="w">${pct(r.pw)}</span></div>`
       : `<div class="cm"><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="t">${p.ptTr ?? 0}</span><i>-</i><span class="big${p.stato === "in" ? " liveN" : ""}" data-sc="c">${p.ptCasa ?? 0}</span></div>`;
     const q = (p.qTr || []).length ? `<div class="qr" data-qt>${(p.qTr || []).map((v, i) => `<span class="${p.stato === "in" && p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${v}-${(p.qCasa || [])[i] ?? 0}</span>`).join("")}</div>` : "";
-    return `<a class="card gm cmp${p.stato === "in" ? " inlive" : ""}" href="#/partita/${p.id}" data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
-  <div class="riga" style="margin-bottom:4px"><span class="pill" data-pill style="color:${col}">${chip}</span><span class="s">${p.stato === "pre" ? `stimati ${r.ptTr.toFixed(0)}-${r.ptCasa.toFixed(0)}` : "Studia"} <i class="ti ti-chevron-right"></i></span></div>
+    const fin = p.stato === "post";
+    return `<${fin ? "div" : "a"} class="card gm cmp${p.stato === "in" ? " inlive" : ""}"${fin ? ` data-tab="${p.id}" data-casa="${p.casa}" data-trasf="${p.trasf}"` : ` href="#/partita/${p.id}"`} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}${fin ? ";cursor:pointer" : ""}">
+  <div class="riga" style="margin-bottom:4px"><span class="pill" data-pill style="color:${col}">${chip}</span><span class="s">${p.stato === "pre" ? `stimati ${r.ptTr.toFixed(0)}-${r.ptCasa.toFixed(0)}` : fin ? "Tabellino" : "Studia"} <i class="ti ${fin ? "ti-chevron-down" : "ti-chevron-right"}"></i></span></div>
   <div class="cg"><div class="tm cr">${lato(p.trasf, "tr")}</div>${mezzo}<div class="tm cr">${lato(p.casa, "ca")}</div></div>${q}
-  <div class="bar" style="margin:6px 0 6px"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>${chips}</a>`;
+  <div class="bar" style="margin:6px 0 6px"><div style="width:${((1 - r.pw) * 100).toFixed(0)}%;background:${ct}"></div><div style="flex:1;background:${cc}"></div></div>${chips}</${fin ? "div" : "a"}>${fin ? `<div class="tabl" id="tb${p.id}" hidden></div>` : ""}`;
   }
   const tag = cliccabile ? "a" : "div", href = cliccabile ? ` href="#/partita/${p.id}"` : "";
   return `<${tag} class="card gm${p.stato === "in" ? " inlive" : ""}"${href} data-gid="${p.id}" data-st="${p.stato}" style="--ca:${ct};--cb:${cc}">
@@ -245,10 +261,10 @@ function riquadriConsigli(D) {
     return `<a class="card" href="#/categoria/${i}" style="padding:12px;display:block"><div class="s"><i class="ti ${ic}" style="color:var(--or)"></i> ${esc(t)}</div><div style="font-size:22px;font-weight:700;margin-top:2px">${l.length}</div><div class="s">migliore ${pct(l[0].prob)}</div></a>`;
   }).join("") + `</div>`;
 }
-let firmaHome = "";
+let firmaHome = "", ultimoD = null;
 const firmaDati = (D) => D.partite.map((p) => p.id + p.stato + p.ptTr + p.ptCasa).join(",");
 function disegnaPartite(D, conPoll, daCache) {
-  firmaHome = firmaDati(D);
+  firmaHome = firmaDati(D); ultimoD = D;
   const top = (id) => D.picks.find((x) => x.g === id);
   let h = topBar(D) + giorniChips();
   if (!D.partite.length) h += `<div class="vuoto">Nessuna partita trovata per questo giorno. Prova un altro giorno.</div>`;
