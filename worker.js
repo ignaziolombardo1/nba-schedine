@@ -169,21 +169,43 @@ async function inviaUnPush(env, sub, k) {
   return r.status;
 }
 // manda a tutti gli iscritti un avviso senza testo; il telefono scarica il testo da /api/ultimo-avviso e lo mostra
-async function pushATutti(env, titolo, testo, url = "/#/schedine") {
+const idSub = async (ep) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ep)))].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+// mette l'avviso nella coda dei dispositivi scelti e manda a ognuno un push senza testo: il telefono ritira il suo messaggio da /api/ultimo-avviso?id=...
+async function accodaPush(env, msg, filtro = () => true) {
   if (!dbOk(env)) return { inviati: 0 };
-  const elenco = (await rigaForma(env, "_push")) || { subs: [] };
-  if (!elenco.subs.length) return { inviati: 0 };
-  await salvaRigaForma(env, "_ultimoavviso", { titolo, testo, url, t: new Date().toISOString() });
-  const k = await chiaviVapid(env), buoni = [], esiti = [];
-  for (const sub of elenco.subs) { let st = 0; try { st = await inviaUnPush(env, sub, k); } catch { st = 0; } esiti.push(st); if (st !== 404 && st !== 410) buoni.push(sub); }
-  if (buoni.length !== elenco.subs.length) await salvaRigaForma(env, "_push", { subs: buoni });
+  const el = (await rigaForma(env, "_push")) || { subs: [] };
+  if (!el.subs.length) return { inviati: 0 };
+  const dest = []; for (const sb of el.subs) { sb.id ||= await idSub(sb.endpoint); if (filtro(sb)) dest.push(sb); }
+  if (!dest.length) return { inviati: 0 };
+  const m = { ...msg, t: new Date().toISOString() }, lim = Date.now() - 6 * 3600e3, coda = (await rigaForma(env, "_coda")) || {};
+  for (const sb of dest) coda[sb.id] = [...(coda[sb.id] || []).filter((x) => Date.parse(x.t) > lim), m].slice(-8);
+  await salvaRigaForma(env, "_coda", coda);
+  await salvaRigaForma(env, "_ultimoavviso", m);
+  const k = await chiaviVapid(env), morti = new Set(), esiti = [];
+  for (const sb of dest) { let st = 0; try { st = await inviaUnPush(env, sb, k); } catch { st = 0; } esiti.push(st); if (st === 404 || st === 410) morti.add(sb.endpoint); }
+  el.subs = el.subs.filter((x) => !morti.has(x.endpoint)); await salvaRigaForma(env, "_push", el);
   return { inviati: esiti.filter((x) => x >= 200 && x < 300).length, esiti };
 }
+const pushATutti = (env, titolo, testo, url = "/#/schedine") => accodaPush(env, { titolo, testo, url });
 async function iscriviPush(env, sub) {
   if (!sub || !/^https:\/\//.test(sub.endpoint || "")) throw new Error("iscrizione non valida");
-  const el = (await rigaForma(env, "_push")) || { subs: [] };
-  el.subs = el.subs.filter((x) => x.endpoint !== sub.endpoint).concat([{ endpoint: sub.endpoint }]).slice(-5);
+  const el = (await rigaForma(env, "_push")) || { subs: [] }, vecchio = el.subs.find((x) => x.endpoint === sub.endpoint);
+  el.subs = el.subs.filter((x) => x.endpoint !== sub.endpoint).concat([{ endpoint: sub.endpoint, id: await idSub(sub.endpoint), pref: vecchio ? vecchio.pref : undefined }]).slice(-8);
   await salvaRigaForma(env, "_push", el);
+}
+// i preferiti di ogni telefono, per avvisare solo di quello che segue
+async function salvaPrefPush(env, d) {
+  const el = (await rigaForma(env, "_push")) || { subs: [] }, sb = el.subs.find((x) => x.endpoint === (d || {}).endpoint); if (!sb) return false;
+  const P = d.pref || {}; sb.pref = { sq: (P.sq || []).slice(0, 30).map(String), pl: (P.pl || []).slice(0, 30).map((x) => ({ pid: String(x.pid), nome: String(x.nome || ""), sq: String(x.sq || "") })) };
+  await salvaRigaForma(env, "_push", el); return true;
+}
+async function ritiraAvviso(env, id) {
+  const base = { titolo: "NBA Schedine", testo: "Apri l'app per vedere le giocate", url: "/#/" };
+  if (!dbOk(env)) return base;
+  if (!id) return (await rigaForma(env, "_ultimoavviso")) || base;
+  const coda = (await rigaForma(env, "_coda")) || {}, l = coda[id] || [];
+  if (!l.length) return (await rigaForma(env, "_ultimoavviso")) || base;
+  const m = l.shift(); coda[id] = l; await salvaRigaForma(env, "_coda", coda); return m;
 }
 async function avvisa(env, titolo, testo, breve) {
   const out = [];
@@ -212,6 +234,8 @@ async function cronAvvisi(env) {
     const D = await apiGiorno(env, { waitUntil: (p) => p.catch(() => {}) }, 0);
     const prePick = D.picks.filter((x) => D.partite.find((p) => p.id === x.g && p.stato === "pre")).slice(0, 6);
     let t = `🏀 NBA di oggi: ${g.partite.length} partite, la prima alle ${g.partite.filter((p) => p.stato === "pre").sort((a, b) => (a.iso < b.iso ? -1 : 1))[0].ora.slice(-5)}\n`;
+    const gdg = [...prePick].sort((a, b) => b.prob - a.prob)[0];
+    if (gdg) t += `\n⭐ Giocata del giorno: ${gdg.testo} (${gdg.partita}) ${pc(gdg.prob)}\n`;
     if (prePick.length) t += `\nMigliori giocate\n` + prePick.map((x) => `• ${x.testo} (${x.partita}) ${pc(x.prob)}`).join("\n");
     const sch = (D.schedine || []).filter((x) => /^q\d+$/.test(x.id));
     for (const s of sch.length ? sch : [(D.schedine || []).find((x) => x.id === "sicura") || (D.schedine || [])[0]].filter(Boolean))
@@ -219,7 +243,26 @@ async function cronAvvisi(env) {
     t += `\n\nLa quota giusta è calcolata dalle probabilità: i bookmaker pagano un po' meno.`;
     t += `\n\nSono stime del modello, non certezze.${env.APP_URL ? "\n" + env.APP_URL : ""}`;
     const schQ = (D.schedine || []).filter((x) => /^q\d+$/.test(x.id));
-    await avvisa(env, "🏀 Le giocate di oggi", t, `${D.partite.filter((p) => p.stato === "pre").length} partite · ${schQ.length ? "schedine quota " + schQ.map((x) => x.obiettivo).join(", ") + " pronte" : "migliori giocate pronte"}`); oggi.d = 1; fatto.push("riepilogo");
+    await avvisa(env, "🏀 Le giocate di oggi", t, `${gdg ? "⭐ " + gdg.testo + " " + pc(gdg.prob) + " · " : ""}${D.partite.filter((p) => p.stato === "pre").length} partite · ${schQ.length ? "schedine quota " + schQ.map((x) => x.obiettivo).join(", ") + " pronte" : "migliori giocate pronte"}`); oggi.d = 1; fatto.push("riepilogo");
+  }
+  // 1b) preferiti: inizio e fine delle partite delle squadre (o dei giocatori) che ogni telefono segue
+  {
+    const subs = ((await rigaForma(env, "_push").catch(() => null)) || { subs: [] }).subs.filter((x) => x.pref && (x.pref.sq.length || x.pref.pl.length));
+    const segue = (sb, p) => sb.pref.sq.includes(p.casa) || sb.pref.sq.includes(p.trasf) || sb.pref.pl.some((x) => x.sq === p.casa || x.sq === p.trasf);
+    oggi.i ||= {}; oggi.f ||= {};
+    for (const p of g.partite) {
+      if (!subs.some((sb) => segue(sb, p))) continue;
+      if (p.stato === "in" && !oggi.i[p.id]) { await accodaPush(env, { titolo: `🏀 ${p.trasf} @ ${p.casa}`, testo: "La partita è iniziata. Tocca per seguirla in diretta.", url: "/#/live" }, (sb) => sb.pref && segue(sb, p)); oggi.i[p.id] = 1; fatto.push("inizio " + p.id); }
+      if (p.stato === "post" && !oggi.f[p.id]) {
+        let box = {}; try { box = await caricaBoxscore(p.id, 600); } catch {}
+        const finale = `Finale: ${p.trasf} ${p.ptTr} - ${p.ptCasa} ${p.casa}`;
+        for (const sb of subs.filter((x) => segue(x, p))) {
+          const righe = sb.pref.pl.filter((x) => x.sq === p.casa || x.sq === p.trasf).map((x) => { const b = box[x.pid]; return b ? `${x.nome}: ${b.pts ?? 0} pt, ${b.reb ?? 0} rb, ${b.ast ?? 0} as` : null; }).filter(Boolean);
+          await accodaPush(env, { titolo: `🏁 ${p.trasf} @ ${p.casa}`, testo: [finale, ...righe].join("\n"), url: `/#/partita/${p.id}` }, (x) => x.endpoint === sb.endpoint);
+        }
+        oggi.f[p.id] = 1; fatto.push("fine " + p.id);
+      }
+    }
   }
   // 2) risultati: una volta, quando tutte le partite del giorno sono finite
   if (!oggi.e && g.partite.every((p) => p.stato === "post")) {
@@ -459,7 +502,8 @@ export default {
       if (p === "/api/push-chiave") { if (!dbOk(env)) return ERR("serve Supabase", 503); return J({ chiave: (await chiaviVapid(env)).pub }); }
       if (p === "/api/push-iscrivi" && req.method === "POST") { if (!dbOk(env)) return ERR("serve Supabase", 503); await iscriviPush(env, await req.json()); return J({ ok: true }); }
       if (p === "/api/push-prova" && req.method === "POST") { const r = await pushATutti(env, "✅ Notifiche attive", "NBA Schedine ti avviserà con il riepilogo ogni mattina e i risultati a fine giornata."); return J(r); }
-      if (p === "/api/ultimo-avviso") { const a = dbOk(env) ? await rigaForma(env, "_ultimoavviso") : null; return J(a || { titolo: "NBA Schedine", testo: "Apri l'app per vedere le giocate", url: "/#/" }, 0); }
+      if (p === "/api/ultimo-avviso") return J(await ritiraAvviso(env, url.searchParams.get("id") || ""), 0);
+      if (p === "/api/push-pref" && req.method === "POST") { if (!dbOk(env)) return ERR("serve Supabase", 503); return J({ ok: await salvaPrefPush(env, await req.json()) }); }
       if (p === "/api/h2h") { const x = (url.searchParams.get("a") || "").toUpperCase(), y = (url.searchParams.get("b") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(x) || !/^[A-Z]{2,4}$/.test(y)) return ERR("sigla non valida", 400); return J({ a: x, b: y, partite: await testaATesta(x, y) }, 1800); }
       if (p === "/api/ultime") { const s = (url.searchParams.get("s") || "").toUpperCase(); if (!/^[A-Z]{2,4}$/.test(s)) return ERR("sigla non valida", 400); return J({ s, ultime: await caricaUltime(s) }, 600); }
       return ERR("non trovato", 404);

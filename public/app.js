@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "51";
+const VERSIONE = "52";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -91,7 +91,7 @@ document.addEventListener("click", async (e) => {
     const [t, id, nome, sq] = fv.dataset.fav.split("|"), P = pref();
     if (t === "sq") P.sq = P.sq.includes(id) ? P.sq.filter((x) => x !== id) : [...P.sq, id];
     else P.pl = P.pl.some((x) => x.pid === id) ? P.pl.filter((x) => x.pid !== id) : [...P.pl, { pid: id, nome, sq }];
-    ls.set("pref", P);
+    ls.set("pref", P); sincPref();
     if ((location.hash || "#/") === "#/" && ultimoD) { clearTimeout(timer); const y = window.scrollY; disegnaPartite(ultimoD, true); window.scrollTo(0, y); }
     else { const on = siSegue(t, id); fv.classList.toggle("on", on); fv.textContent = on ? "★" : "☆"; }
     return;
@@ -312,6 +312,11 @@ function riquadroPreferiti(D) {
     righe.push(`<a class="riga rg" ${x ? `href="#/giocatore/${esc(f.pid)}"` : ""} style="color:inherit"><div class="lg">${foto(f.pid, 24)}<b>${esc(f.nome)}</b></div><span class="s">${x ? `stima ${x.pts.v.toFixed(0)} pt · ${x.reb.v.toFixed(0)} rb · ${x.ast.v.toFixed(0)} as` : "non gioca"}</span></a>`); }
   return `<div class="card"><div class="s" style="margin-bottom:4px">I tuoi preferiti oggi</div>${righe.join("")}</div>`;
 }
+// manda al server i preferiti di questo telefono (solo se le notifiche sono attive) per avvisare di ciò che segui
+async function sincPref() {
+  try { if (!("serviceWorker" in navigator) || !("PushManager" in window)) return; const reg = await navigator.serviceWorker.ready, sb = await reg.pushManager.getSubscription(); if (!sb) return;
+    await fetch("/api/push-pref", { method: "POST", body: JSON.stringify({ endpoint: sb.endpoint, pref: pref() }) }); } catch {}
+}
 let firmaHome = "", ultimoD = null;
 const firmaDati = (D) => D.partite.map((p) => p.id + p.stato + p.ptTr + p.ptCasa).join(",");
 function disegnaPartite(D, conPoll, daCache) {
@@ -370,7 +375,7 @@ function vistaImpostazioni() {
   h += `<div class="card"><div class="sub" style="margin-top:0">Quali giocate vedere</div>${Object.keys(IMP0.mercati).map((m) => `<label class="sw"><input type="checkbox" data-mk="${m}" ${i.mercati[m] !== false ? "checked" : ""}> ${esc({ Vincente: "Squadra vincente", Squadra: "Punti di una squadra", Totale: "Totale della partita" }[m] || m)}</label>`).join("")}</div>`;
   const pushOk = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
   h += `<div class="card"><div class="sub" style="margin-top:0"><i class="ti ti-bell"></i> Notifiche sul telefono</div>` + (pushOk
-    ? `<div class="cap" style="margin:4px 0 8px">Ogni mattina il riepilogo con le migliori giocate e le schedine quota 2, 5, 10 e 20; a fine giornata i risultati.</div><div class="grid2"><button class="btn" id="pushOn" style="margin:0">Attiva</button><button class="btn" id="pushProva" style="margin:0">Invia prova</button></div><div class="cap" id="pushMsg" style="margin-bottom:0">${Notification.permission === "granted" ? "Permesso già concesso: tocca «Attiva» per collegare questo telefono." : Notification.permission === "denied" ? "Le notifiche sono bloccate nelle impostazioni del telefono per questa app." : ""}</div>`
+    ? `<div class="cap" style="margin:4px 0 8px">Ogni mattina la Giocata del giorno e le schedine quota 2, 5, 10 e 20; a fine giornata i risultati. Per le squadre e i giocatori con la ★ ricevi anche l'inizio e la fine della partita, con i numeri dei tuoi giocatori.</div><div class="grid2"><button class="btn" id="pushOn" style="margin:0">Attiva</button><button class="btn" id="pushProva" style="margin:0">Invia prova</button></div><div class="cap" id="pushMsg" style="margin-bottom:0">${Notification.permission === "granted" ? "Permesso già concesso: tocca «Attiva» per collegare questo telefono." : Notification.permission === "denied" ? "Le notifiche sono bloccate nelle impostazioni del telefono per questa app." : ""}</div>`
     : `<div class="cap" style="margin:4px 0 0">Per le notifiche su iPhone serve iOS 16.4 o più recente e l'app aperta dalla schermata Home: in Safari tocca Condividi → «Aggiungi alla schermata Home», poi apri l'app da lì e torna qui.</div>`) + `</div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Puntata predefinita nel registro (€)</div><input class="linea" inputmode="decimal" id="pun" value="${i.puntata}" style="margin-top:0"></div>`;
   h += `<div class="card"><div class="sub" style="margin-top:0">Bankroll (€)</div><input class="linea" inputmode="decimal" id="bk" value="${i.bankroll}" style="margin-top:0"><div class="sub">Quanto del consiglio di Kelly seguire</div><div class="tabs">${[[0.1, "10%"], [0.25, "25%"], [0.5, "50%"]].map(([v, t]) => `<button class="chipbtn${i.kelly === v ? " on" : ""}" data-kl="${v}">${t}</button>`).join("")}</div><div class="cap">Il bankroll serve a calcolare la puntata consigliata e la curva nel registro. Meglio una frazione prudente di Kelly: 25% è lo standard dei tipster.</div></div>`;
@@ -390,7 +395,7 @@ function vistaImpostazioni() {
         const raw = atob(k.replace(/-/g, "+").replace(/_/g, "/")), key = Uint8Array.from(raw, (c) => c.charCodeAt(0));
         const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
         const r = await fetch("/api/push-iscrivi", { method: "POST", body: JSON.stringify(sub.toJSON()) }); if (!r.ok) throw new Error("iscrizione non salvata");
-        msg("Fatto: questo telefono è collegato. Tocca «Invia prova».");
+        sincPref(); msg("Fatto: questo telefono è collegato. Tocca «Invia prova».");
       } catch (e) { msg("Non riuscito: " + (e.message || e)); }
     };
     $("#pushProva").onclick = async () => { try { const r = await (await fetch("/api/push-prova", { method: "POST" })).json(); msg(r.inviati ? "Prova inviata: dovrebbe arrivare tra pochi secondi." : "Nessun telefono collegato o invio rifiutato (" + JSON.stringify(r.esiti || []) + "): tocca prima «Attiva»."); } catch (e) { msg("Non riuscito: " + (e.message || e)); } };
@@ -1140,5 +1145,5 @@ window.addEventListener("pagehide", salvaPosizione);
 let ripristinaY = null;
 { const u = ls.get("ult", null); if (u && Date.now() - u.t < 30 * 60000 && (!location.hash || location.hash === "#/") && u.h && u.h !== "#/") { location.hash = u.h; ripristinaY = u.y; } else if (u && Date.now() - u.t < 30 * 60000 && (!location.hash || location.hash === "#/")) ripristinaY = u.y; }
 route();
-setTimeout(() => aggiornaRegistro(), 2500);
+setTimeout(() => { aggiornaRegistro(); sincPref(); }, 2500);
 if (ripristinaY) for (const ms of [500, 1200, 2500]) setTimeout(() => window.scrollTo(0, ripristinaY), ms);
