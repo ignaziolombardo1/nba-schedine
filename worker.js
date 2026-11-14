@@ -123,9 +123,11 @@ async function aggiornaSquadre(env) {
 }
 
 // ---- Taratura automatica: confronta le percentuali previste con i risultati reali dello Storico (almeno 25 esiti per categoria)
+// la taratura usa solo le giocate fatte col modello attuale (dal 14/11/2026, quando sono state allargate le dispersioni e aggiunte le ultime partite)
+const MODELLO_DAL = "2026-11-14T12:00:00Z";
 function calcolaCalib(righe) {
   const per = {};
-  for (const r of righe) { if (r.esito !== 0 && r.esito !== 1) continue; const c = (per[r.tipo] ||= { n: 0, hit: 0, pred: 0 }); c.n++; c.hit += r.esito; c.pred += r.prob; }
+  for (const r of righe) { if (r.esito !== 0 && r.esito !== 1) continue; if (r.creato && String(r.creato) < MODELLO_DAL) continue; const c = (per[r.tipo] ||= { n: 0, hit: 0, pred: 0 }); c.n++; c.hit += r.esito; c.pred += r.prob; }
   const out = {};
   for (const [t, c] of Object.entries(per)) {
     if (c.n < 25) continue;

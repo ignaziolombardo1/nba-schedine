@@ -1,7 +1,11 @@
 import { nome } from "./squadre.js";
 
-export const HOME_ADV = 1.5, MIN_MINUTI = 20, PESO_FORMA = 0.6, B2B_PUNTI = 1.2;
-export const STD = { Totale: 17, Spread: 12, Squadra: 12 };
+export const HOME_ADV = 2.0, MIN_MINUTI = 20, PESO_FORMA = 0.6, B2B_PUNTI = 1.2;
+// Dispersioni: il modello è semplice (non vede il ritmo, le rotazioni, le serate storte), quindi i suoi errori sono più larghi
+// di quelli delle linee dei bookmaker (circa 18 sul totale e 12 sul margine). Meglio essere prudenti che sicuri e sbagliati.
+export const STD = { Totale: 19, Spread: 13.5, Squadra: 12.5 };
+export const RISCHIO_DNP = 0.97; // riposo non annunciato, uscita presto per infortunio o panchina lunga
+export const K_EMP = 12; // peso delle ultime partite vere rispetto alla stima del modello (come se fossero 12 partite di prior)
 export const PROB_MIN = 0.70;
 export const MERCATI = {
   Punti: { k: "pts", unita: "pt", cv: 0.30, stdMin: 3.0, minimo: 14.5, scalini: [9.5, 12.5, 14.5, 17.5, 19.5, 22.5, 24.5, 27.5, 29.5, 32.5, 34.5, 39.5] },
@@ -16,7 +20,9 @@ function erf(x) {
   return s * y;
 }
 export const phi = (x) => 0.5 * (1 + erf(x / Math.SQRT2));
-export const stdGiocatore = (val, minuti, m) => Math.max(val * MERCATI[m].cv * (1 + 0.02 * Math.max(0, 34 - minuti)), MERCATI[m].stdMin);
+export const stdGiocatore = (val, minuti, m) => { const sd = Math.max(val * MERCATI[m].cv * (1 + 0.02 * Math.max(0, 34 - minuti)), MERCATI[m].stdMin); return Math.sqrt(sd * sd + (0.10 * val) ** 2); }; // + incertezza sulla media stessa (ruolo, minuti, serate)
+// unisce la probabilità del modello con quante volte il giocatore ha davvero superato la linea nelle ultime partite
+export const mescolaEmp = (pm, arr, t, k = K_EMP) => { if (!arr || arr.length < 5) return { p: pm, h: null, n: 0 }; const l = arr.slice(0, 10), h = l.filter((x) => x > t).length; return { p: (h + k * pm) / (l.length + k), h, n: l.length }; };
 export const probOver = (val, soglia, sd) => 1 - phi((soglia - val) / sd);
 const r1 = (x) => Math.round(x * 10) / 10;
 
@@ -87,10 +93,12 @@ export function proiettaGiocatori(sig, avv, teams, players, infortuni = {}, form
         const cb = q ? combina(val[m], stdGiocatore(val[m], minAtt, m), q) : null;
         const v = r1(cb && cb.mk ? cb.mu : val[m]);
         const sd = stdGiocatore(v, minAtt, m);
-        const lad = c.scalini.map((t) => ({ t, p: probOver(v, t, sd) })).filter((x) => x.p >= 0.2 && x.p <= 0.97);
-        const buone = lad.filter((x) => x.p * pg >= PROB_MIN);
+        const arrE = f && f[c.k], kE = cb && cb.mk ? 2 * K_EMP : K_EMP;
+        const lad = c.scalini.map((t) => { const e = mescolaEmp(probOver(v, t, sd), arrE, t, kE); return { t, p: e.p, h: e.h, n: e.n }; }).filter((x) => x.p >= 0.2 && x.p <= 0.97);
+        const buone = lad.filter((x) => x.p * pg * RISCHIO_DNP >= PROB_MIN);
         o[c.k] = { v, vModello: r1(val[m]), mk: cb && cb.mk ? { ...cb.mk, pFin: probOver(v, cb.mk.linea, sd) } : null, sd: r1(sd * 100) / 100, media: r1(m === "Punti" ? p.pts : m === "Rimbalzi" ? p.reb : p.ast), lad: lad.map((x) => [x.t, Math.round(x.p * 1000) / 1000]),
-                   rec: buone.length ? Math.max(...buone.map((x) => x.t)) : null, pg };
+                   rec: buone.length ? Math.max(...buone.map((x) => x.t)) : null, pg,
+                   ...(() => { const b = buone.length ? buone.reduce((a, x) => (x.t > a.t ? x : a)) : null; return b ? { pRec: b.p, emp: b.h == null ? null : { h: b.h, n: b.n } } : { pRec: null, emp: null }; })() };
       }
       return o;
     })
@@ -128,10 +136,10 @@ export function consigli(partite) {
         for (const p of [...ds].sort((a, b) => b[c.k].v - a[c.k].v).slice(0, 3)) {
           const o = p[c.k];
           if (o.rec === null || o.rec < c.minimo) continue;
-          const pg = o.pg ?? 1, pr = probOver(o.v, o.rec, o.sd) * pg, mk = o.mk;
+          const pg = o.pg ?? 1, pr = (o.pRec ?? probOver(o.v, o.rec, o.sd)) * pg * RISCHIO_DNP, mk = o.mk;
           const motivo = mk
             ? `Bookmaker: linea ${mk.linea}, over ${Math.round(mk.pMk * 100)}% (${mk.n} ${mk.n === 1 ? "libro" : "libri"}). Il nostro modello da solo stimava ${o.vModello.toFixed(1)} ${c.unita}; unito al mercato la stima è ${o.v.toFixed(1)} e la probabilità di superare ${o.rec} è circa ${Math.round(pr * 100)}%.`
-            : `Stima ${o.v.toFixed(1)} ${c.unita} (media stagione ${o.media.toFixed(1)}, ${Math.round(p.min)} min). Con la variabilità tipica, la probabilità di superare ${o.rec} è circa ${Math.round(pr * 100)}%. Senza quote dei bookmaker: controlla la linea offerta.`;
+            : `Stima ${o.v.toFixed(1)} ${c.unita} (media stagione ${o.media.toFixed(1)}, ${Math.round(p.min)} min). Con la variabilità tipica${o.emp ? ` e il fatto che negli ultimi ${o.emp.n} incontri ha superato ${o.rec} ${o.emp.h} volte` : ""}, la probabilità di superare ${o.rec} è circa ${Math.round(pr * 100)}%. Senza quote dei bookmaker: controlla la linea offerta.`;
           const motivoPg = pg < 1 ? ` Attenzione: è in dubbio e scende in campo con probabilità del ${Math.round(pg * 100)}%: la percentuale tiene già conto di questo rischio.` : "";
           out.push({ ...base, id: `${c.k}_${g.id}_${p.pid || p.nome}`, tipo: m, squadra: sq, pid: p.pid, testo: `${p.nome} over ${o.rec} ${c.unita}`, stima: o.v.toFixed(1), prob: pr, motivo: motivo + motivoPg, dubbio: pg < 1 ? pg : null,
             mercato: mk ? { linea: mk.linea, pMk: mk.pMk, pMod: mk.pMod, pFin: mk.pFin, div: mk.div } : null });
