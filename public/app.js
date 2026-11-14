@@ -4,7 +4,7 @@ const APP = $("#app");
 const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const OR = "#ff8a2a", GR = "#3ddc84", RD = "#ff5d5d", AM = "#ffb066", MU = "#8b93a5";
 const ls = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-const VERSIONE = "60";
+const VERSIONE = "61";
 // blocca lo zoom a pizzico di iOS (che ignora user-scalable)
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, (e) => e.preventDefault());
 const GIORNI = [["Ieri", -1], ["Oggi", 0], ["Domani", 1], ["Dopodomani", 2]];
@@ -96,6 +96,15 @@ document.addEventListener("click", async (e) => {
     if ((location.hash || "#/") === "#/" && ultimoD) { clearTimeout(timer); const y = window.scrollY; disegnaPartite(ultimoD, true); window.scrollTo(0, y); }
     else { const on = siSegue(t, id); fv.classList.toggle("on", on); if (t === "gm") fv.textContent = on ? "🔔" : "🔕"; else fv.textContent = on ? "★" : "☆"; }
     if (t === "gm" && siSegue("gm", id)) avvisoNotifiche();
+    return;
+  }
+  const lv = e.target.closest("[data-lv]");
+  if (lv) { // nel Live i dettagli si aprono solo toccando la partita
+    const id = lv.dataset.lv, det = document.getElementById("lvd" + id); if (!det) return;
+    const apri = det.hidden; det.hidden = !apri; apri ? liveAperte.add(id) : liveAperte.delete(id);
+    try { sessionStorage.setItem("liveAp", JSON.stringify([...liveAperte])); } catch {}
+    const ch = lv.querySelector(".ti-chevron-down,.ti-chevron-up"); if (ch) { ch.classList.toggle("ti-chevron-up", apri); ch.classList.toggle("ti-chevron-down", !apri); }
+    if (ultimoLive) ultimoLive.html = APP.innerHTML;
     return;
   }
   const tb = e.target.closest("[data-tab]");
@@ -287,8 +296,8 @@ function seguiPunteggi(D) {
 }
 async function vistaPartite(force) {
   // mostra subito l'ultimo giorno salvato sul telefono, poi lo aggiorna
-  const salvato = force ? null : cacheLocale("/api/giorno?" + qs());
-  if (salvato) disegnaPartite(applicaImp(salvato), false, true); else { APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni(); }
+  const haGia = force && ultimoD && APP.querySelector("[data-gid]"), salvato = haGia ? null : cacheLocale("/api/giorno?" + qs());
+  if (salvato) disegnaPartite(applicaImp(salvato), false, true); else if (!haGia) { APP.innerHTML = topBar() + giorniChips() + skel(); bindGiorni(); }
   let D; try { D = await dati(force); } catch (e) { if (!salvato) { APP.innerHTML = topBar() + giorniChips() + errBox(e); bindGiorni(); } return; }
   if (!location.hash.replace(/^#/, "").replace(/^\//, "")) { const y = window.scrollY; disegnaPartite(D, true); if (salvato) window.scrollTo(0, y); }
 }
@@ -906,7 +915,7 @@ function ultimeHtml(D, sig, ul) {
 function schedaLive(D, p) {
   const t = T(D, p.casa), v = T(D, p.trasf), cc = t.c, ct = v.c.toLowerCase() === cc.toLowerCase() ? "#5a6378" : v.c;
   const lato = (ab, r, n, l) => `<div class="tm cr" data-l="${l}"><div class="cl ${r}">${logo(ab, 34)}<div class="tn"><b class="n12">${n}</b>${esc(T(D, ab).b.length > 7 ? ab : T(D, ab).b)}</div></div></div>`;
-  return `<div class="card gm cmp inlive" data-lg="${p.id}" style="--ca:${ct};--cb:${cc}"><div class="riga" style="margin-bottom:4px"><span class="pill" style="color:${OR}"><span class="dot"></span>Live · ${esc(p.dettaglio)}</span><span class="s">Giocata al ${Math.round(p.f * 100)}%</span></div>
+  return `<div class="card gm cmp inlive" data-lg="${p.id}" data-lv="${p.id}" style="--ca:${ct};--cb:${cc};cursor:pointer"><div class="riga" style="margin-bottom:4px"><span class="pill" style="color:${OR}"><span class="dot"></span>Live · ${esc(p.dettaglio)}</span><span class="s">Giocata al ${Math.round(p.f * 100)}% <i class="ti ti-chevron-${liveAperte.has(String(p.id)) ? "up" : "down"}"></i></span></div>
   <div class="cg">${lato(p.casa, "ca", 1, "c")}<div class="cm"><span class="big liveN">${p.ptCasa}</span><i>-</i><span class="big liveN">${p.ptTr}</span></div>${lato(p.trasf, "tr", 2, "t")}</div>
   <div class="qr">${(p.qTr || []).map((q, i) => `<span class="${p.periodo === i + 1 ? "cur" : ""}">Q${i + 1} ${(p.qCasa || [])[i] ?? 0}-${q}</span>`).join("")}</div>
   <div class="bar" style="margin:6px 0 2px"><div style="width:${(p.pwLive * 100).toFixed(0)}%;background:${cc}"></div><div style="flex:1;background:${ct}"></div></div>
@@ -989,8 +998,15 @@ function mieGiocateLive(D) {
   }).join("")) + `</div>`).join("");
 }
 const bloccoLive = {};
+let ultimoLive = null;
+const liveAperte = new Set((() => { try { return JSON.parse(sessionStorage.getItem("liveAp") || "[]"); } catch { return []; } })());
 async function vistaLive(primo = true) {
-  if (primo) { APP.innerHTML = topBar() + skel(); delete APP.dataset.live; aggiornaRegistro(); }
+  let dipinto = false;
+  if (primo) {
+    aggiornaRegistro();
+    if (ultimoLive && Date.now() - ultimoLive.t < 10 * 60000) { APP.innerHTML = ultimoLive.html; APP.dataset.live = ultimoLive.chiavi; for (const k of Object.keys(bloccoLive)) delete bloccoLive[k]; Object.assign(bloccoLive, ultimoLive.blocchi); dipinto = true; }
+    else { APP.innerHTML = topBar() + skel(); delete APP.dataset.live; }
+  }
   let D; try { D = await api("/api/live", 3000); } catch (e) { if (primo) APP.innerHTML = topBar() + errBox(e); timer = setTimeout(() => location.hash.startsWith("#/live") && vistaLive(false), 20000); return; }
   if (!location.hash.startsWith("#/live")) return;
   aggiornaStoriaLive(D);
@@ -1003,15 +1019,15 @@ async function vistaLive(primo = true) {
   }
   B.push(["mie", mieGiocateLive(D)]);
   for (const p of D.partite) {
-    let h = schedaLive(D, p) + formazioniLive(D, p) + grafLive(p);
+    let h = formazioniLive(D, p) + grafLive(p);
     if (p.segnali && p.segnali.length) h += `<div class="sub"><span class="pill" style="color:${OR}"><span class="dot"></span>Segnali live</span> <span class="s">nati durante la partita</span></div>` + p.segnali.map(rigaSegnale).join("");
     const picks = [...p.picks].sort((a, b) => (a.pLive >= 0.995) - (b.pLive >= 0.995) || b.pLive - a.pLive);
     if (picks.length) h += `<div class="sub">Le nostre giocate su questa partita</div>` + picks.map(rigaLive).join("");
     h += `<a class="btn" style="display:block;text-align:center" href="#/partita/${p.id}">Apri lo studio di questa partita</a>`;
-    B.push(["g" + p.id, h]);
+    B.push(["g" + p.id, schedaLive(D, p) + `<div class="lvdet" id="lvd${p.id}"${liveAperte.has(String(p.id)) ? "" : " hidden"}>${h}</div>`]);
   }
   const chiavi = B.map((x) => x[0]).join("|"), y = window.scrollY;
-  if (!primo && APP.dataset.live === chiavi && APP.querySelector("[data-blk]")) {
+  if ((!primo || dipinto) && APP.dataset.live === chiavi && APP.querySelector("[data-blk]")) {
     for (const [k, h] of B) {
       const el = APP.querySelector(`[data-blk="${k}"]`); if (!el || bloccoLive[k] === h) continue;
       const aperti = [...el.querySelectorAll("details")].map((d) => d.open);
@@ -1023,6 +1039,7 @@ async function vistaLive(primo = true) {
     for (const k of Object.keys(bloccoLive)) delete bloccoLive[k];
     for (const [k, h] of B) bloccoLive[k] = h;
   }
+  ultimoLive = { t: Date.now(), chiavi, html: APP.innerHTML, blocchi: { ...bloccoLive } };
   window.scrollTo(0, y);
   for (const p of D.partite) illumina(APP.querySelector(`[data-lg="${p.id}"]`), p.id, p.ptTr, p.ptCasa);
   timer = setTimeout(() => !document.hidden && location.hash.startsWith("#/live") && vistaLive(false), 6000);
